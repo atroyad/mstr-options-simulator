@@ -1842,59 +1842,54 @@ async function fetchSaxoData(btn,status){
     let optInstruments=[];
     const MSTR_ROOT_ID=2517;
 
-    // Step 3a: try Saxo option chain endpoint (stock Uic=787)
-    const rChain=await saxoFetch(`/trade/v1/options/chain?UnderlyingUic=${uic}&AssetType=Stock&$top=5`);
-    const dChain=await rChain.json();
-    console.log('trade/v1/options/chain:',JSON.stringify(dChain).slice(0,600));
+    // saxoJson: fetch + safe JSON parse; returns null on error/404
+    const saxoJson=async path=>{
+      try{
+        const r=await saxoFetch(path);
+        const txt=await r.text();
+        if(!txt||txt.trimStart().startsWith('<')) return null;
+        return JSON.parse(txt);
+      }catch(e){return null;}
+    };
 
-    if(dChain.Data?.length>0){
-      // Option chain returned individual contracts — extract all
-      const rChainAll=await saxoFetch(`/trade/v1/options/chain?UnderlyingUic=${uic}&AssetType=Stock&$top=500`);
-      const dChainAll=await rChainAll.json();
-      optInstruments=(dChainAll.Data||[]).filter(o=>o.StrikePrice&&o.PutCall&&o.ExpiryDate);
-      console.log(`Option chain contracts: ${optInstruments.length}, sample:`,JSON.stringify(optInstruments[0]||{}).slice(0,400));
+    // Step 3a: generate upcoming MSTR option expiry dates
+    // US equity options expire on 3rd Friday monthly + every Friday (weeklies)
+    const expiries=[];
+    const now=new Date();
+    // Weeklies: next 8 Fridays
+    for(let w=1;w<=8;w++){
+      const fd=new Date(now);
+      const daysToFri=(5-fd.getDay()+7)%7||7;
+      fd.setDate(fd.getDate()+daysToFri+(w-1)*7);
+      expiries.push(fd.toISOString().slice(0,10));
     }
-
-    // Step 3b: try CanonicalOptionRootId with known MSTR expiry dates
-    if(optInstruments.length===0){
-      // Generate standard US option expiry dates (3rd Friday of each month) for next 6 months
-      const expiries=[];
-      const now=new Date();
-      for(let m=0;m<6;m++){
-        const d=new Date(now.getFullYear(),now.getMonth()+m,1);
-        // Find 3rd Friday
-        let fri=0,cnt=0;
-        for(let day=1;day<=31;day++){
-          const wd=new Date(d.getFullYear(),d.getMonth(),day).getDay();
-          if(wd===5){cnt++;if(cnt===3){fri=day;break;}}
-        }
-        if(fri){
-          const exp=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(fri).padStart(2,'0')}`;
-          if(new Date(exp)>now) expiries.push(exp);
-        }
-        // Also add weekly (next 8 Fridays)
-        if(m===0){
-          for(let w=0;w<8;w++){
-            const fd=new Date(now);
-            fd.setDate(fd.getDate()+(5-fd.getDay()+7*(w+1))%7||7+7*w);
-            const wexp=fd.toISOString().slice(0,10);
-            if(!expiries.includes(wexp)) expiries.push(wexp);
-          }
+    // Monthly: 3rd Friday for next 6 months
+    for(let m=0;m<6;m++){
+      const d=new Date(now.getFullYear(),now.getMonth()+m,1);
+      let fri=0,cnt=0;
+      for(let day=1;day<=31;day++){
+        if(new Date(d.getFullYear(),d.getMonth(),day).getDay()===5){
+          if(++cnt===3){fri=day;break;}
         }
       }
-      expiries.sort();
-      console.log('Trying hardcoded expiry dates:',expiries.slice(0,8));
-      for(const exp of expiries.slice(0,6)){
-        const re=await saxoFetch(`/ref/v1/instruments?CanonicalOptionRootId=${MSTR_ROOT_ID}&ExpiryDate=${exp}&AssetTypes=StockOption&$top=200`);
-        const de=await re.json();
-        if(expiries.indexOf(exp)===0) console.log(`CanonicalOptionRootId expiry ${exp}:`,JSON.stringify(de).slice(0,400));
-        const contracts=(de.Data||[]).filter(o=>o.StrikePrice&&o.PutCall);
-        contracts.forEach(o=>{if(!o.ExpiryDate) o.ExpiryDate=exp;});
-        optInstruments.push(...contracts);
-        if(optInstruments.length>0&&expiries.indexOf(exp)===0) break; // log first hit then continue
+      if(fri){
+        const exp=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(fri).padStart(2,'0')}`;
+        if(!expiries.includes(exp)&&new Date(exp)>now) expiries.push(exp);
       }
-      console.log(`Contracts from expiry queries: ${optInstruments.length}`);
     }
+    expiries.sort();
+    console.log('Expiry dates to try:',expiries);
+
+    // Step 3b: query CanonicalOptionRootId + ExpiryDate for each expiry
+    for(const exp of expiries){
+      const de=await saxoJson(`/ref/v1/instruments?CanonicalOptionRootId=${MSTR_ROOT_ID}&ExpiryDate=${exp}&AssetTypes=StockOption&$top=200`);
+      if(expiries.indexOf(exp)===0) console.log(`CanonicalOptionRootId=${MSTR_ROOT_ID} exp=${exp}:`,JSON.stringify(de).slice(0,400));
+      if(!de) continue;
+      const contracts=(de.Data||[]).filter(o=>o.StrikePrice&&o.PutCall);
+      contracts.forEach(o=>{if(!o.ExpiryDate) o.ExpiryDate=exp;});
+      optInstruments.push(...contracts);
+    }
+    console.log(`Total contracts from expiry queries: ${optInstruments.length}`);
 
     // Try to extract contracts — Saxo may encode expiry/strike in the Symbol field
     // e.g. "MSTR 260117C00200000" = MSTR Jan17'26 Call $200
