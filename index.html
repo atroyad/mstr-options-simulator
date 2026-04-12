@@ -1853,53 +1853,47 @@ async function fetchSaxoData(btn,status){
     const optRoot=related.find(r=>r.AssetType==='StockOption'||r.Type==='StockOption');
     console.log('Option root from related:',JSON.stringify(optRoot));
 
-    // 3b: if we found a root Uic, expand it
-    if(optRoot?.Uic){
-      const rootUic=optRoot.Uic;
-      for(const param of['OptionRootId','GroupOptionRootId','CanonicalOptionRootId']){
-        const re=await fetch(
-          `${BASE}/ref/v1/instruments?${param}=${rootUic}&AssetTypes=StockOption&$top=500`,
-          {headers:H}
-        );
-        const de=await re.json();
-        console.log(`${param}=${rootUic} → ${de.Data?.length} results, sample:`,JSON.stringify((de.Data||[]).slice(0,1)));
-        const found=(de.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
-        if(found.length>0){optInstruments=found;break;}
-      }
-    }
+    // 3b: MSTR option root is MSTR:xcbf, GroupOptionRootId=2517
+    // Use contractoptionspaces → contractoptions (correct Saxo API for individual strikes)
+    const MSTR_ROOT_ID=2517;
+    console.log('Fetching option spaces for root',MSTR_ROOT_ID);
+    const rSpaces=await fetch(
+      `${BASE}/ref/v1/instruments/contractoptionspaces?OptionRootId=${MSTR_ROOT_ID}&$top=50`,
+      {headers:H}
+    );
+    const dSpaces=await rSpaces.json();
+    console.log('contractoptionspaces:',JSON.stringify(dSpaces).slice(0,600));
+    const spaces=dSpaces.Data||dSpaces.OptionSpace||[];
 
-    // 3c: try ExchangeId=OPRA with various MSTR-related keywords
-    if(optInstruments.length===0){
-      for(const kw of['MSTR','Strategy','MSTR_US']){
-        const rk=await fetch(
-          `${BASE}/ref/v1/instruments?Keywords=${encodeURIComponent(kw)}&AssetTypes=StockOption&ExchangeId=OPRA&$top=200`,
+    if(spaces.length>0){
+      // Fetch individual contracts for each expiry space (limit to nearest 6 expiries)
+      const near=spaces.slice(0,6);
+      for(const sp of near){
+        const spaceId=sp.OptionSpaceId||sp.Identifier||sp.Id;
+        const expiry=sp.ExpiryDate||sp.Expiry||'';
+        if(!spaceId) continue;
+        const rc=await fetch(
+          `${BASE}/ref/v1/instruments/contractoptions?OptionSpaceId=${spaceId}&$top=200`,
           {headers:H}
         );
-        const dk=await rk.json();
-        console.log(`OPRA keyword "${kw}": ${dk.Data?.length} results, sample:`,JSON.stringify((dk.Data||[]).slice(0,2)));
-        const direct=(dk.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
-        if(direct.length>0){optInstruments=direct;break;}
-        // Try expanding any root that looks like MSTR (not MSTX, not MSTR1)
-        const root=(dk.Data||[]).find(o=>
-          (o.Symbol==='MSTR_US:xcbf'||o.Description?.includes('Strategy Inc')||o.Description?.includes('MicroStrategy'))&&
-          !o.Symbol?.startsWith('MSTX')
-        );
-        if(root){
-          const rid=root.GroupOptionRootId||root.Identifier;
-          console.log('Found root via OPRA:',root.Symbol,rid);
-          for(const param of['OptionRootId','GroupOptionRootId']){
-            const re=await fetch(
-              `${BASE}/ref/v1/instruments?${param}=${rid}&AssetTypes=StockOption&$top=500`,
-              {headers:H}
-            );
-            const de=await re.json();
-            console.log(`Expansion ${param}=${rid}: ${de.Data?.length} results`);
-            const found=(de.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
-            if(found.length>0){optInstruments=found;break;}
-          }
-          if(optInstruments.length>0) break;
-        }
+        const dc=await rc.json();
+        if(near.indexOf(sp)===0) console.log(`contractoptions spaceId=${spaceId} (${expiry}):`,JSON.stringify(dc).slice(0,500));
+        const contracts=(dc.Data||[]).filter(o=>o.StrikePrice&&o.PutCall);
+        // Attach ExpiryDate from the space if not on the contract
+        contracts.forEach(o=>{if(!o.ExpiryDate&&expiry) o.ExpiryDate=expiry;});
+        optInstruments.push(...contracts);
       }
+      console.log(`contractoptions total: ${optInstruments.length} contracts`);
+    } else {
+      // spaces endpoint failed — log what we got and try direct instrument query
+      console.warn('contractoptionspaces returned no data, trying direct query');
+      const rd=await fetch(
+        `${BASE}/ref/v1/instruments?GroupOptionRootId=${MSTR_ROOT_ID}&AssetTypes=StockOption&$top=500`,
+        {headers:H}
+      );
+      const dd=await rd.json();
+      console.log('Direct GroupOptionRootId query sample:',JSON.stringify((dd.Data||[]).slice(0,2)));
+      optInstruments=(dd.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
     }
 
     if(optInstruments.length===0){
