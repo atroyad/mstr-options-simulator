@@ -1842,21 +1842,39 @@ async function fetchSaxoData(btn,status){
     let optInstruments=[];
     const MSTR_ROOT_ID=2517;
 
-    // MSTR root (Identifier=2517) has GroupId=961 — individual contracts share the same GroupId
-    // Try GroupId=961 to fetch individual option contracts
-    const MSTR_GROUP_ID=961;
-    console.log('Trying GroupId=',MSTR_GROUP_ID);
-    const rd=await saxoFetch(`/ref/v1/instruments?GroupId=${MSTR_GROUP_ID}&AssetTypes=StockOption&$top=500`);
-    const dd=await rd.json();
-    console.log('GroupId query total:',dd.Data?.length,'first FULL:',JSON.stringify((dd.Data||[])[0]));
+    // MSTR option root: Identifier=2517, Symbol=MSTR:xcbf
+    // Saxo instruments endpoint only returns ContractOptionRoot items, never individual contracts.
+    // Correct approach: get expiry dates from root details, then query per expiry with CanonicalOptionRootId.
+    const MSTR_ROOT_ID=2517;
 
-    // Also try ExchangeId=OPRA + Keywords=MSTR with $top=500 to see if individual contracts appear
-    if(!dd.Data?.length||(dd.Data||[])[0]?.SummaryType==='ContractOptionRoot'){
-      console.log('GroupId returned roots or nothing — trying OPRA keyword with $top=500');
-      const rd2=await saxoFetch(`/ref/v1/instruments?Keywords=MSTR&AssetTypes=StockOption&ExchangeId=OPRA&$top=500`);
-      const dd2=await rd2.json();
-      console.log('OPRA keyword $top=500 total:',dd2.Data?.length,'first FULL:',JSON.stringify((dd2.Data||[])[0]),'last FULL:',JSON.stringify((dd2.Data||[]).slice(-1)[0]));
-      dd.Data=dd2.Data;
+    // Step 3a: get root details to discover available expiry dates
+    const rDet=await saxoFetch(`/ref/v1/instruments/details?Uics=${MSTR_ROOT_ID}&AssetTypes=StockOption`);
+    const dDet=await rDet.json();
+    console.log('Root details FULL:',JSON.stringify(dDet).slice(0,1000));
+    const rootDetail=dDet.Data?.[0]||{};
+    // ExpiryDates may be in various fields depending on Saxo version
+    const expiryDates=rootDetail.ExpiryDates||rootDetail.Expiries||rootDetail.TradingProfile?.ExpiryDates||[];
+    console.log('Expiry dates from root:',expiryDates);
+
+    // Step 3b: fetch individual contracts per expiry date
+    if(expiryDates.length>0){
+      for(const exp of expiryDates.slice(0,6)){
+        const re=await saxoFetch(`/ref/v1/instruments?CanonicalOptionRootId=${MSTR_ROOT_ID}&ExpiryDate=${exp}&AssetTypes=StockOption&$top=200`);
+        const de=await re.json();
+        if(expiryDates.indexOf(exp)===0) console.log(`Contracts for expiry ${exp}:`,JSON.stringify(de).slice(0,600));
+        const contracts=(de.Data||[]).filter(o=>o.StrikePrice&&o.PutCall);
+        contracts.forEach(o=>{if(!o.ExpiryDate) o.ExpiryDate=exp;});
+        optInstruments.push(...contracts);
+      }
+      console.log(`Total contracts from expiry queries: ${optInstruments.length}`);
+    }
+
+    // Step 3c: if root details didn't have expiry dates, try trade/v1/prices/options
+    if(optInstruments.length===0){
+      console.log('No expiry dates from root — trying trade prices options endpoint');
+      const rPO=await saxoFetch(`/trade/v1/prices/options?Uic=${uic}&AssetType=Stock&PutCall=Call&$top=5`);
+      const dPO=await rPO.json();
+      console.log('trade/v1/prices/options:',JSON.stringify(dPO).slice(0,600));
     }
 
     // Try to extract contracts — Saxo may encode expiry/strike in the Symbol field
