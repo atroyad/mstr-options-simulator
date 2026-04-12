@@ -1840,37 +1840,65 @@ async function fetchSaxoData(btn,status){
     }
 
     // ── Step 3: find MSTR option contracts ──
-    // MicroStrategy renamed to "Strategy Inc." — try multiple keyword searches
     let optInstruments=[];
 
-    const optKeywords=['MSTR_US','MSTR','Strategy'];
-    for(const kw of optKeywords){
-      const rk=await fetch(
-        `${BASE}/ref/v1/instruments?Keywords=${encodeURIComponent(kw)}&AssetTypes=StockOption&$top=100`,
-        {headers:H}
-      );
-      const dk=await rk.json();
-      console.log(`Keyword "${kw}" results:`,JSON.stringify(dk.Data||[]));
-      // Individual contracts have ExpiryDate + StrikePrice + PutCall
-      const direct=(dk.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
-      if(direct.length>0){optInstruments=direct;console.log(`Found ${direct.length} contracts via "${kw}"`);break;}
-      // If only roots returned, try expanding the one matching MSTR/Strategy
-      const mstrRoot=(dk.Data||[]).find(o=>
-        o.Symbol?.toUpperCase().startsWith('MSTR')&&
-        !o.Symbol?.toUpperCase().startsWith('MSTX')&&
-        (o.Description?.includes('MicroStrategy')||o.Description?.includes('Strategy'))
-      );
-      if(mstrRoot){
-        const rootId=mstrRoot.GroupOptionRootId||mstrRoot.Identifier;
-        console.log(`Expanding root ${rootId} (${mstrRoot.Symbol})…`);
+    // 3a: get related instruments from the MSTR stock Uic — this links to the option root
+    const rRel=await fetch(
+      `${BASE}/ref/v1/instruments/details?Uics=${uic}&AssetTypes=Stock&FieldGroups=RelatedInstruments`,
+      {headers:H}
+    );
+    const dRel=await rRel.json();
+    console.log('Related instruments:',JSON.stringify(dRel).slice(0,800));
+    const related=dRel.Data?.[0]?.RelatedInstruments||[];
+    const optRoot=related.find(r=>r.AssetType==='StockOption'||r.Type==='StockOption');
+    console.log('Option root from related:',JSON.stringify(optRoot));
+
+    // 3b: if we found a root Uic, expand it
+    if(optRoot?.Uic){
+      const rootUic=optRoot.Uic;
+      for(const param of['OptionRootId','GroupOptionRootId','CanonicalOptionRootId']){
         const re=await fetch(
-          `${BASE}/ref/v1/instruments?OptionRootId=${rootId}&AssetTypes=StockOption&$top=400`,
+          `${BASE}/ref/v1/instruments?${param}=${rootUic}&AssetTypes=StockOption&$top=500`,
           {headers:H}
         );
         const de=await re.json();
-        console.log('Expansion result:',de.Data?.length,'sample:',JSON.stringify((de.Data||[]).slice(0,1)));
-        optInstruments=(de.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
-        if(optInstruments.length>0){console.log(`Found ${optInstruments.length} contracts via root expansion`);break;}
+        console.log(`${param}=${rootUic} → ${de.Data?.length} results, sample:`,JSON.stringify((de.Data||[]).slice(0,1)));
+        const found=(de.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
+        if(found.length>0){optInstruments=found;break;}
+      }
+    }
+
+    // 3c: try ExchangeId=OPRA with various MSTR-related keywords
+    if(optInstruments.length===0){
+      for(const kw of['MSTR','Strategy','MSTR_US']){
+        const rk=await fetch(
+          `${BASE}/ref/v1/instruments?Keywords=${encodeURIComponent(kw)}&AssetTypes=StockOption&ExchangeId=OPRA&$top=200`,
+          {headers:H}
+        );
+        const dk=await rk.json();
+        console.log(`OPRA keyword "${kw}": ${dk.Data?.length} results, sample:`,JSON.stringify((dk.Data||[]).slice(0,2)));
+        const direct=(dk.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
+        if(direct.length>0){optInstruments=direct;break;}
+        // Try expanding any root that looks like MSTR (not MSTX, not MSTR1)
+        const root=(dk.Data||[]).find(o=>
+          (o.Symbol==='MSTR_US:xcbf'||o.Description?.includes('Strategy Inc')||o.Description?.includes('MicroStrategy'))&&
+          !o.Symbol?.startsWith('MSTX')
+        );
+        if(root){
+          const rid=root.GroupOptionRootId||root.Identifier;
+          console.log('Found root via OPRA:',root.Symbol,rid);
+          for(const param of['OptionRootId','GroupOptionRootId']){
+            const re=await fetch(
+              `${BASE}/ref/v1/instruments?${param}=${rid}&AssetTypes=StockOption&$top=500`,
+              {headers:H}
+            );
+            const de=await re.json();
+            console.log(`Expansion ${param}=${rid}: ${de.Data?.length} results`);
+            const found=(de.Data||[]).filter(o=>o.ExpiryDate&&o.StrikePrice&&o.PutCall);
+            if(found.length>0){optInstruments=found;break;}
+          }
+          if(optInstruments.length>0) break;
+        }
       }
     }
 
