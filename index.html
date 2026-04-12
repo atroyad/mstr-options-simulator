@@ -1412,18 +1412,17 @@ function setSaxoEnv(env){
 // sessionStorage is cleared after token exchange. Token stays in memory only.
 
 
-// ── Saxo OAuth — PKCE flow via popup ──
+// ── Saxo OAuth — Implicit (Token) flow via popup ──
 // Confirmed endpoints (developer.saxo/openapi/learn):
-//   SIM:  https://sim.logonvalidation.net/authorize|/token
-//   Live: https://live.logonvalidation.net/authorize|/token
-// Grant type: PKCE (response_type=code + code_challenge).
+//   SIM:  https://sim.logonvalidation.net/authorize
+//   Live: https://live.logonvalidation.net/authorize
+// Grant type: Token / Implicit (response_type=token).
 // Popup flow:
-//   1. Generate code_verifier + code_challenge
-//   2. Open popup → Saxo login page
-//   3. User authenticates → Saxo redirects popup to localhost?code=...
-//   4. Popup is now same-origin → we read ?code= from popup.location
-//   5. POST code + verifier to /token → get access_token
-//   6. Token stored in memory only, never written to disk.
+//   1. Open popup → Saxo login page (no PKCE params needed)
+//   2. User authenticates → Saxo redirects popup to our URL#access_token=...
+//   3. Popup is now same-origin → read hash fragment directly
+//   4. No token-exchange POST → no CORS issue
+//   5. Token stored in memory only, never written to disk.
 
 function saxoAuthBase(){
   return state.saxoEnv==='sim'
@@ -1460,11 +1459,9 @@ async function saxoDebugUrl(){
   const c=await genChallenge(v);
   const url=
     saxoAuthBase()+'/authorize'+
-    '?response_type=code'+
+    '?response_type=token'+
     '&client_id='+encodeURIComponent(clientId)+
     '&redirect_uri='+encodeURIComponent(redirectUri)+
-    '&code_challenge='+c+
-    '&code_challenge_method=S256'+
     '&state=debug';
   prompt('Full auth URL (open in new tab to test):',url);
 }
@@ -1476,7 +1473,9 @@ function saxoAuthStatus(){
 }
 
 async function saxoOAuthLogin(){
-  // Read client_id from whichever input is active
+  // Implicit flow: response_type=token — token arrives in redirect fragment,
+  // no token-exchange POST needed, so no CORS issue.
+  // Saxo app settings: Grant type = Token (Implicit). Redirect URI = this page URL.
   const isSim=state.saxoEnv==='sim';
   const inputId=isSim?'saxoClientIdSim':'saxoClientId';
   const inputEl=document.getElementById(inputId);
@@ -1489,7 +1488,7 @@ async function saxoOAuthLogin(){
     alert(
       'Enter your app key (client_id) first.\n\n'+
       'Required settings in your Saxo live app:\n'+
-      '  Grant type: PKCE\n'+
+      '  Grant type: Token (Implicit)\n'+
       '  Redirect URI: '+redirectUri
     );
     return;
@@ -1497,82 +1496,73 @@ async function saxoOAuthLogin(){
 
   authStatus.textContent='Opening login…';authStatus.style.color='var(--mut)';
 
-  _pkceVerifier=genVerifier();
-  const challenge=await genChallenge(_pkceVerifier);
   const stateParam='mstr_'+Math.random().toString(36).slice(2,8);
 
+  // Implicit flow — no PKCE params, no code_challenge
   const authUrl=
     saxoAuthBase()+'/authorize'+
-    '?response_type=code'+
+    '?response_type=token'+
     '&client_id='+encodeURIComponent(clientId)+
     '&redirect_uri='+encodeURIComponent(redirectUri)+
-    '&code_challenge='+challenge+
-    '&code_challenge_method=S256'+
     '&state='+stateParam;
 
   const popup=window.open(authUrl,'saxo_login','width=540,height=660,left=200,top=80');
   if(!popup){
-    authStatus.textContent='Popup blocked — allow popups for localhost then try again';
+    authStatus.textContent='Popup blocked — allow popups for this site then try again';
     authStatus.style.color='var(--red)';
-    _pkceVerifier='';
     return;
   }
   authStatus.textContent='Waiting for Saxo login…';
 
-  const poll=setInterval(async()=>{
+  const poll=setInterval(()=>{
     try{
-      // Throws while popup is on Saxo domain (cross-origin) — expected, keep polling
+      // Throws while popup is on Saxo domain (cross-origin) — keep polling
+      const hash=popup.location.hash;
       const search=popup.location.search;
-      if(search&&search.includes('code=')){
+
+      // Check for error in fragment or query
+      if(hash.includes('error=')||search.includes('error=')){
         clearInterval(poll);
-        const params=new URLSearchParams(search.slice(1));
-        const code=params.get('code');
         popup.close();
+        const params=new URLSearchParams(
+          hash.includes('error=')?hash.slice(1):search.slice(1)
+        );
+        const err=params.get('error_description')||params.get('error')||'unknown';
+        authStatus.textContent='Auth error: '+err;
+        authStatus.style.color='var(--red)';
+        console.error('Saxo auth error:',err);
+        return;
+      }
 
-        authStatus.textContent='Exchanging code for token…';
-
-        const verifier=_pkceVerifier;
-        _pkceVerifier=''; // clear immediately — single use
-
-        try{
-          const resp=await fetch(saxoAuthBase()+'/token',{
-            method:'POST',
-            headers:{'Content-Type':'application/x-www-form-urlencoded'},
-            body:new URLSearchParams({
-              grant_type:'authorization_code',
-              code,
-              redirect_uri:redirectUri,
-              client_id:clientId,
-              code_verifier:verifier,
-            }),
-          });
-          const data=await resp.json();
-          if(data.access_token){
-            state.saxoToken=data.access_token;
-            const exp=data.expires_in?Math.round(data.expires_in/60)+'min':'?';
-            authStatus.textContent=`✓ Authenticated (${exp} remaining)`;
-            authStatus.style.color='var(--grn)';
-            fetchLiveData();
-          } else {
-            authStatus.textContent='Token error: '+(data.error_description||data.error||'unknown');
-            authStatus.style.color='var(--red)';
-            console.error('Saxo token response:',data);
-          }
-        }catch(e){
-          authStatus.textContent='Token exchange failed — see console';
+      // Token arrives in fragment: #access_token=...&expires_in=...
+      if(hash&&hash.includes('access_token=')){
+        clearInterval(poll);
+        popup.close();
+        const params=new URLSearchParams(hash.slice(1)); // strip leading #
+        const token=params.get('access_token');
+        const exp=params.get('expires_in');
+        if(token){
+          state.saxoToken=token;
+          const expStr=exp?Math.round(+exp/60)+'min':'?';
+          authStatus.textContent=`✓ Authenticated (${expStr} remaining)`;
+          authStatus.style.color='var(--grn)';
+          fetchLiveData();
+        } else {
+          authStatus.textContent='No token in redirect';
           authStatus.style.color='var(--red)';
-          console.error('Saxo token exchange error:',e);
         }
+        return;
       }
     }catch(e){/* cross-origin — popup still on Saxo, keep polling */}
 
-    if(popup.closed&&_pkceVerifier){
-      // Popup closed before we got a code — user cancelled
-      clearInterval(poll);
-      _pkceVerifier='';
-      authStatus.textContent='Login cancelled';
-      authStatus.style.color='var(--ylw)';
-    }
+    // Popup closed without completing auth
+    try{
+      if(popup.closed){
+        clearInterval(poll);
+        authStatus.textContent='Login cancelled';
+        authStatus.style.color='var(--ylw)';
+      }
+    }catch(e){}
   },400);
 }
 
