@@ -1842,34 +1842,58 @@ async function fetchSaxoData(btn,status){
     let optInstruments=[];
     const MSTR_ROOT_ID=2517;
 
-    // Step 3a: get root details to discover available expiry dates
-    const rDet=await saxoFetch(`/ref/v1/instruments/details?Uics=${MSTR_ROOT_ID}&AssetTypes=StockOption`);
-    const dDet=await rDet.json();
-    console.log('Root details FULL:',JSON.stringify(dDet).slice(0,1000));
-    const rootDetail=dDet.Data?.[0]||{};
-    // ExpiryDates may be in various fields depending on Saxo version
-    const expiryDates=rootDetail.ExpiryDates||rootDetail.Expiries||rootDetail.TradingProfile?.ExpiryDates||[];
-    console.log('Expiry dates from root:',expiryDates);
+    // Step 3a: try Saxo option chain endpoint (stock Uic=787)
+    const rChain=await saxoFetch(`/trade/v1/options/chain?UnderlyingUic=${uic}&AssetType=Stock&$top=5`);
+    const dChain=await rChain.json();
+    console.log('trade/v1/options/chain:',JSON.stringify(dChain).slice(0,600));
 
-    // Step 3b: fetch individual contracts per expiry date
-    if(expiryDates.length>0){
-      for(const exp of expiryDates.slice(0,6)){
+    if(dChain.Data?.length>0){
+      // Option chain returned individual contracts — extract all
+      const rChainAll=await saxoFetch(`/trade/v1/options/chain?UnderlyingUic=${uic}&AssetType=Stock&$top=500`);
+      const dChainAll=await rChainAll.json();
+      optInstruments=(dChainAll.Data||[]).filter(o=>o.StrikePrice&&o.PutCall&&o.ExpiryDate);
+      console.log(`Option chain contracts: ${optInstruments.length}, sample:`,JSON.stringify(optInstruments[0]||{}).slice(0,400));
+    }
+
+    // Step 3b: try CanonicalOptionRootId with known MSTR expiry dates
+    if(optInstruments.length===0){
+      // Generate standard US option expiry dates (3rd Friday of each month) for next 6 months
+      const expiries=[];
+      const now=new Date();
+      for(let m=0;m<6;m++){
+        const d=new Date(now.getFullYear(),now.getMonth()+m,1);
+        // Find 3rd Friday
+        let fri=0,cnt=0;
+        for(let day=1;day<=31;day++){
+          const wd=new Date(d.getFullYear(),d.getMonth(),day).getDay();
+          if(wd===5){cnt++;if(cnt===3){fri=day;break;}}
+        }
+        if(fri){
+          const exp=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(fri).padStart(2,'0')}`;
+          if(new Date(exp)>now) expiries.push(exp);
+        }
+        // Also add weekly (next 8 Fridays)
+        if(m===0){
+          for(let w=0;w<8;w++){
+            const fd=new Date(now);
+            fd.setDate(fd.getDate()+(5-fd.getDay()+7*(w+1))%7||7+7*w);
+            const wexp=fd.toISOString().slice(0,10);
+            if(!expiries.includes(wexp)) expiries.push(wexp);
+          }
+        }
+      }
+      expiries.sort();
+      console.log('Trying hardcoded expiry dates:',expiries.slice(0,8));
+      for(const exp of expiries.slice(0,6)){
         const re=await saxoFetch(`/ref/v1/instruments?CanonicalOptionRootId=${MSTR_ROOT_ID}&ExpiryDate=${exp}&AssetTypes=StockOption&$top=200`);
         const de=await re.json();
-        if(expiryDates.indexOf(exp)===0) console.log(`Contracts for expiry ${exp}:`,JSON.stringify(de).slice(0,600));
+        if(expiries.indexOf(exp)===0) console.log(`CanonicalOptionRootId expiry ${exp}:`,JSON.stringify(de).slice(0,400));
         const contracts=(de.Data||[]).filter(o=>o.StrikePrice&&o.PutCall);
         contracts.forEach(o=>{if(!o.ExpiryDate) o.ExpiryDate=exp;});
         optInstruments.push(...contracts);
+        if(optInstruments.length>0&&expiries.indexOf(exp)===0) break; // log first hit then continue
       }
-      console.log(`Total contracts from expiry queries: ${optInstruments.length}`);
-    }
-
-    // Step 3c: if root details didn't have expiry dates, try trade/v1/prices/options
-    if(optInstruments.length===0){
-      console.log('No expiry dates from root — trying trade prices options endpoint');
-      const rPO=await saxoFetch(`/trade/v1/prices/options?Uic=${uic}&AssetType=Stock&PutCall=Call&$top=5`);
-      const dPO=await rPO.json();
-      console.log('trade/v1/prices/options:',JSON.stringify(dPO).slice(0,600));
+      console.log(`Contracts from expiry queries: ${optInstruments.length}`);
     }
 
     // Try to extract contracts — Saxo may encode expiry/strike in the Symbol field
