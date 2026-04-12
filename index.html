@@ -252,24 +252,31 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <span id="saxoAuthStatus" style="font-size:9px;color:var(--mut)"></span>
         </div>
         <!-- Live: same flow, different endpoint -->
-        <div id="saxoLiveUI" style="display:none;align-items:center;gap:4px">
-          <input id="saxoClientId" type="text" placeholder="Live app client_id"
-            style="font-size:9px;padding:2px 5px;width:120px;background:var(--sur2);
-              border:1px solid var(--bdr);color:var(--txt);border-radius:3px"
-            oninput="state.saxoClientId=this.value"
-            title="client_id from your live app at developer.saxo.com → Apps">
-          <button class="btn" style="font-size:9px;padding:2px 7px"
-            onclick="saxoOAuthLogin()"
-            title="Opens Saxo live login popup — uses personal account + OPRA subscription">
-            🔐 Login</button>
-          <button style="font-size:9px;padding:2px 5px;border:1px solid var(--bdr);
-            border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer"
-            onclick="showRedirectUri()"
-            title="Show exact redirect URI to paste into Saxo app settings">URI?</button>
-          <button style="font-size:9px;padding:2px 5px;border:1px solid var(--bdr);
-            border-radius:3px;background:var(--sur2);color:var(--ylw);cursor:pointer"
-            onclick="saxoDebugUrl()"
-            title="Show full auth URL — open in new tab to test directly">Debug URL</button>
+        <div id="saxoLiveUI" style="display:none;flex-direction:column;gap:3px">
+          <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+            <input id="saxoClientId" type="text" placeholder="Live app client_id"
+              style="font-size:9px;padding:2px 5px;width:130px;background:var(--sur2);
+                border:1px solid var(--bdr);color:var(--txt);border-radius:3px"
+              oninput="state.saxoClientId=this.value"
+              title="client_id from your live app at developer.saxo.com → Apps">
+            <input id="saxoProxyUrl" type="text" placeholder="Proxy URL (workers.dev/…)"
+              style="font-size:9px;padding:2px 5px;width:170px;background:var(--sur2);
+                border:1px solid var(--bdr);color:var(--txt);border-radius:3px"
+              oninput="state.saxoProxyUrl=this.value.trim()"
+              title="Cloudflare Worker URL for token exchange — see saxo-token-proxy.js">
+            <button class="btn" style="font-size:9px;padding:2px 7px"
+              onclick="saxoOAuthLogin()"
+              title="Opens Saxo live login popup — PKCE via Cloudflare Worker proxy">
+              🔐 Login</button>
+            <button style="font-size:9px;padding:2px 5px;border:1px solid var(--bdr);
+              border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer"
+              onclick="showRedirectUri()"
+              title="Show redirect URI to register in Saxo app settings">URI?</button>
+            <button style="font-size:9px;padding:2px 5px;border:1px solid var(--bdr);
+              border-radius:3px;background:var(--sur2);color:var(--ylw);cursor:pointer"
+              onclick="saxoDebugUrl()"
+              title="Show full auth URL for debugging">Debug URL</button>
+          </div>
           <span id="saxoAuthStatusLive" style="font-size:9px;color:var(--mut)"></span>
         </div>
       </div>
@@ -857,6 +864,7 @@ const state={
   saxoToken:'',        // Saxo access token (session memory only, never persisted)
   saxoEnv:'sim',       // 'sim' = developer.saxo SIM gateway | 'live' = real account gateway
   saxoClientId:'',     // OAuth app client_id from developer.saxo.com → Apps
+  saxoProxyUrl:'',     // Cloudflare Worker proxy URL for token exchange (avoids CORS)
 };
 
 // Color palette for custom day lines — cycles through these
@@ -1412,17 +1420,19 @@ function setSaxoEnv(env){
 // sessionStorage is cleared after token exchange. Token stays in memory only.
 
 
-// ── Saxo OAuth — Implicit (Token) flow via popup ──
+// ── Saxo OAuth — PKCE flow via popup + Cloudflare Worker proxy ──
 // Confirmed endpoints (developer.saxo/openapi/learn):
-//   SIM:  https://sim.logonvalidation.net/authorize
-//   Live: https://live.logonvalidation.net/authorize
-// Grant type: Token / Implicit (response_type=token).
+//   SIM:  https://sim.logonvalidation.net/authorize|/token
+//   Live: https://live.logonvalidation.net/authorize|/token
+// Grant type: Code / PKCE (response_type=code + code_challenge S256).
 // Popup flow:
-//   1. Open popup → Saxo login page (no PKCE params needed)
-//   2. User authenticates → Saxo redirects popup to our URL#access_token=...
-//   3. Popup is now same-origin → read hash fragment directly
-//   4. No token-exchange POST → no CORS issue
-//   5. Token stored in memory only, never written to disk.
+//   1. Generate code_verifier + code_challenge
+//   2. Open popup → Saxo login page
+//   3. User authenticates → Saxo redirects popup back to our page with ?code=
+//   4. Popup is same-origin → read ?code= from popup.location.search
+//   5. POST code + verifier to Cloudflare Worker proxy (adds CORS headers)
+//   6. Worker forwards to Saxo /token → returns access_token
+//   7. Token stored in memory only, never written to disk.
 
 function saxoAuthBase(){
   return state.saxoEnv==='sim'
@@ -1459,9 +1469,11 @@ async function saxoDebugUrl(){
   const c=await genChallenge(v);
   const url=
     saxoAuthBase()+'/authorize'+
-    '?response_type=token'+
+    '?response_type=code'+
     '&client_id='+encodeURIComponent(clientId)+
     '&redirect_uri='+encodeURIComponent(redirectUri)+
+    '&code_challenge='+c+
+    '&code_challenge_method=S256'+
     '&state=debug';
   prompt('Full auth URL (open in new tab to test):',url);
 }
@@ -1473,9 +1485,9 @@ function saxoAuthStatus(){
 }
 
 async function saxoOAuthLogin(){
-  // Implicit flow: response_type=token — token arrives in redirect fragment,
-  // no token-exchange POST needed, so no CORS issue.
-  // Saxo app settings: Grant type = Token (Implicit). Redirect URI = this page URL.
+  // PKCE flow — token exchange is proxied through a Cloudflare Worker to avoid CORS.
+  // Saxo app settings: Grant type = Code / PKCE. Redirect URI = this page URL.
+  // Proxy: deploy saxo-token-proxy.js to Cloudflare Workers and paste the URL below.
   const isSim=state.saxoEnv==='sim';
   const inputId=isSim?'saxoClientIdSim':'saxoClientId';
   const inputEl=document.getElementById(inputId);
@@ -1484,81 +1496,126 @@ async function saxoOAuthLogin(){
   const redirectUri=window.location.href.split('#')[0].split('?')[0];
   const authStatus=saxoAuthStatus();
 
+  // Read proxy URL from field if present
+  const proxyEl=document.getElementById('saxoProxyUrl');
+  if(proxyEl) state.saxoProxyUrl=proxyEl.value.trim();
+  const proxyUrl=state.saxoProxyUrl;
+
   if(!clientId){
     alert(
       'Enter your app key (client_id) first.\n\n'+
       'Required settings in your Saxo live app:\n'+
-      '  Grant type: Token (Implicit)\n'+
-      '  Redirect URI: '+redirectUri
+      '  Grant type: Code / PKCE\n'+
+      '  Redirect URI: '+redirectUri+'\n\n'+
+      'Also paste your Cloudflare Worker proxy URL.'
+    );
+    return;
+  }
+  if(!isSim&&!proxyUrl){
+    alert(
+      'Paste your Cloudflare Worker proxy URL.\n\n'+
+      'Deploy saxo-token-proxy.js to https://workers.cloudflare.com\n'+
+      'then paste the worker URL (e.g. https://saxo-proxy.xxx.workers.dev)'
     );
     return;
   }
 
   authStatus.textContent='Opening login…';authStatus.style.color='var(--mut)';
 
+  _pkceVerifier=genVerifier();
+  const challenge=await genChallenge(_pkceVerifier);
   const stateParam='mstr_'+Math.random().toString(36).slice(2,8);
 
-  // Implicit flow — no PKCE params, no code_challenge
   const authUrl=
     saxoAuthBase()+'/authorize'+
-    '?response_type=token'+
+    '?response_type=code'+
     '&client_id='+encodeURIComponent(clientId)+
     '&redirect_uri='+encodeURIComponent(redirectUri)+
+    '&code_challenge='+challenge+
+    '&code_challenge_method=S256'+
     '&state='+stateParam;
 
   const popup=window.open(authUrl,'saxo_login','width=540,height=660,left=200,top=80');
   if(!popup){
     authStatus.textContent='Popup blocked — allow popups for this site then try again';
     authStatus.style.color='var(--red)';
+    _pkceVerifier='';
     return;
   }
   authStatus.textContent='Waiting for Saxo login…';
 
-  const poll=setInterval(()=>{
+  const poll=setInterval(async()=>{
     try{
       // Throws while popup is on Saxo domain (cross-origin) — keep polling
-      const hash=popup.location.hash;
       const search=popup.location.search;
+      const hash=popup.location.hash;
 
-      // Check for error in fragment or query
-      if(hash.includes('error=')||search.includes('error=')){
+      // Error returned by Saxo
+      if(search.includes('error=')||hash.includes('error=')){
         clearInterval(poll);
         popup.close();
-        const params=new URLSearchParams(
-          hash.includes('error=')?hash.slice(1):search.slice(1)
-        );
-        const err=params.get('error_description')||params.get('error')||'unknown';
-        authStatus.textContent='Auth error: '+err;
+        _pkceVerifier='';
+        const p=new URLSearchParams(search.includes('error=')?search.slice(1):hash.slice(1));
+        authStatus.textContent='Auth error: '+(p.get('error_description')||p.get('error')||'unknown');
         authStatus.style.color='var(--red)';
-        console.error('Saxo auth error:',err);
         return;
       }
 
-      // Token arrives in fragment: #access_token=...&expires_in=...
-      if(hash&&hash.includes('access_token=')){
+      // Saxo redirected popup back with ?code=
+      if(search&&search.includes('code=')){
         clearInterval(poll);
+        const params=new URLSearchParams(search.slice(1));
+        const code=params.get('code');
         popup.close();
-        const params=new URLSearchParams(hash.slice(1)); // strip leading #
-        const token=params.get('access_token');
-        const exp=params.get('expires_in');
-        if(token){
-          state.saxoToken=token;
-          const expStr=exp?Math.round(+exp/60)+'min':'?';
-          authStatus.textContent=`✓ Authenticated (${expStr} remaining)`;
-          authStatus.style.color='var(--grn)';
-          fetchLiveData();
-        } else {
-          authStatus.textContent='No token in redirect';
+
+        authStatus.textContent='Exchanging code via proxy…';
+
+        const verifier=_pkceVerifier;
+        _pkceVerifier=''; // single-use — clear immediately
+
+        // POST through Cloudflare Worker proxy (adds CORS headers)
+        const tokenEndpoint=isSim
+          ? saxoAuthBase()+'/token'   // SIM: direct (same-origin in dev tools, no CORS issue)
+          : proxyUrl;                  // Live: must go through proxy
+
+        try{
+          const resp=await fetch(tokenEndpoint,{
+            method:'POST',
+            headers:{'Content-Type':'application/x-www-form-urlencoded'},
+            body:new URLSearchParams({
+              grant_type:'authorization_code',
+              code,
+              redirect_uri:redirectUri,
+              client_id:clientId,
+              code_verifier:verifier,
+              saxo_env:state.saxoEnv,  // proxy uses this to pick the right Saxo endpoint
+            }),
+          });
+          const data=await resp.json();
+          if(data.access_token){
+            state.saxoToken=data.access_token;
+            const exp=data.expires_in?Math.round(data.expires_in/60)+'min':'?';
+            authStatus.textContent=`✓ Authenticated (${exp} remaining)`;
+            authStatus.style.color='var(--grn)';
+            fetchLiveData();
+          } else {
+            authStatus.textContent='Token error: '+(data.error_description||data.error||'unknown');
+            authStatus.style.color='var(--red)';
+            console.error('Saxo token response:',data);
+          }
+        }catch(e){
+          authStatus.textContent='Proxy request failed — check Worker URL & CORS';
           authStatus.style.color='var(--red)';
+          console.error('Token exchange error:',e);
         }
-        return;
       }
     }catch(e){/* cross-origin — popup still on Saxo, keep polling */}
 
-    // Popup closed without completing auth
+    // Popup closed before completing
     try{
-      if(popup.closed){
+      if(popup.closed&&_pkceVerifier){
         clearInterval(poll);
+        _pkceVerifier='';
         authStatus.textContent='Login cancelled';
         authStatus.style.color='var(--ylw)';
       }
