@@ -1941,12 +1941,20 @@ async function fetchSaxoData(btn,status){
     console.log(`Saxo: ${optInstruments.length} contracts, fetching prices…`);
     console.log('Contract sample:',JSON.stringify(optInstruments[0]).slice(0,400));
     const uics=optInstruments.map(o=>o.Identifier);
+    // Only fetch near-the-money contracts (spot ± 60%) to stay within API limits
+    // and reduce the number of batch calls
+    const atmContracts=optInstruments.filter(o=>
+      o.StrikePrice>=spot*0.4&&o.StrikePrice<=spot*1.6
+    );
+    console.log(`ATM-filtered contracts: ${atmContracts.length} of ${optInstruments.length}`);
+    const uics=atmContracts.map(o=>o.Identifier);
+
     const priceData=[];
     for(let i=0;i<uics.length;i+=50){
       const batch=uics.slice(i,i+50).join(',');
-      const rp=await saxoFetch(`/trade/v1/infoprices/list?Uics=${batch}&AssetType=StockOption&FieldGroups=PriceInfo,DisplayAndFormat,Greeks,Quote`);
+      const rp=await saxoFetch(`/trade/v1/infoprices/list?Uics=${batch}&AssetType=StockOption&FieldGroups=Greeks,Quote,PriceInfo`);
       const dp=await rp.json();
-      if(i===0) console.log('Saxo infoprices/list (batch 0):',JSON.stringify(dp).slice(0,800));
+      if(i===0) console.log('Saxo infoprices/list (batch 0):',JSON.stringify(dp).slice(0,1000));
       if(dp.Data) priceData.push(...dp.Data);
     }
     console.log(`Saxo: ${priceData.length} option price records received`);
@@ -1956,7 +1964,7 @@ async function fetchSaxoData(btn,status){
     if(priceData.length>0) console.log('Saxo option data sample:',JSON.stringify(priceData[0]).slice(0,800));
     state.liveOptions=[];
     for(const p of priceData){
-      const inst=optInstruments.find(o=>o.Identifier===p.Uic);
+      const inst=atmContracts.find(o=>o.Identifier===p.Uic);
       if(!inst) continue;
 
       const K=inst.StrikePrice??p.DisplayAndFormat?.StrikePrice??p.Greeks?.StrikePrice;
