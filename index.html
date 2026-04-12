@@ -1940,7 +1940,6 @@ async function fetchSaxoData(btn,status){
     // ── Step 4: get prices for all option contracts ──
     console.log(`Saxo: ${optInstruments.length} contracts, fetching prices…`);
     console.log('Contract sample:',JSON.stringify(optInstruments[0]).slice(0,400));
-    const uics=optInstruments.map(o=>o.Identifier);
     // Only fetch near-the-money contracts (spot ± 60%) to stay within API limits
     // and reduce the number of batch calls
     const atmContracts=optInstruments.filter(o=>
