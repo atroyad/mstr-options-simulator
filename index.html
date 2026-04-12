@@ -1741,7 +1741,7 @@ async function fetchLiveData(){
 // Alternatively register an app at developer.saxo.com with your brokerage
 // account for persistent OAuth — this tool only needs "read" scopes.
 // ═══════════════════════════════════════════════════════
-function fitSmileAndFinish(spot,status,btn){
+function fitSmileAndFinish(spot,status,btn,note=''){
   // Set ATM IV from live options
   const calls=state.liveOptions.filter(o=>o.type==='call'&&o.iv>0.05&&o.iv<5);
   if(calls.length>0){
@@ -1767,8 +1767,7 @@ function fitSmileAndFinish(spot,status,btn){
     if(skEl){skEl.value=state.smileSkew;document.getElementById('smileSkewVal').textContent=state.smileSkew.toFixed(2);}
     if(cvEl){cvEl.value=state.smileConv;document.getElementById('smileConvVal').textContent=state.smileConv.toFixed(2);}
   }
-  const src=state.liveOptions.length>0?'Yahoo fallback':'spot only';
-  status.textContent=`Saxo: $${spot.toFixed(2)} · ${state.liveOptions.length} options (${src}) · smile fitted`;
+  status.textContent=`Saxo: $${spot.toFixed(2)} · ${state.liveOptions.length} options${note} · smile fitted`;
   status.style.color='var(--grn)';
   btn.textContent='⟳ Refresh';btn.disabled=false;
   renderAll();
@@ -1984,14 +1983,16 @@ async function fetchSaxoData(btn,status){
       if(!iv||iv<=0||iv>5) continue;
       state.liveOptions.push({K,iv,type,exp,bid,ask,mid});
     }
+    console.log(`liveOptions populated: ${state.liveOptions.length} of ${priceData.length} price records`);
 
     const marketClosed=priceData.length>0&&priceData[0]?.Quote?.MarketState==='Closed';
-    if(marketClosed&&state.liveOptions.length===0){
-      status.textContent=`Saxo: $${spot.toFixed(2)} · ${priceData.length} contracts found · Market closed — reopen Monday for live prices`;
+    if(state.liveOptions.length===0&&marketClosed){
+      status.textContent=`Saxo: $${spot.toFixed(2)} · ${priceData.length} contracts · Market closed, no prices yet`;
       status.style.color='var(--ylw)';btn.textContent='⟳ Refresh';btn.disabled=false;
       renderAll();return;
     }
-    fitSmileAndFinish(spot,status,btn);
+    const closedNote=marketClosed?' (Friday close)':'';
+    fitSmileAndFinish(spot,status,btn,closedNote);
   }catch(e){
     status.textContent='Saxo fetch failed — see console';
     status.style.color='var(--red)';
