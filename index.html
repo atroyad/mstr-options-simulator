@@ -1913,14 +1913,19 @@ async function fetchLiveData(){
 // account for persistent OAuth — this tool only needs "read" scopes.
 // ═══════════════════════════════════════════════════════
 function fitSmileAndFinish(spot,status,btn,note=''){
-  // Set ATM IV from live options
-  const calls=state.liveOptions.filter(o=>o.type==='call'&&o.iv>0.05&&o.iv<5);
-  if(calls.length>0){
-    const atm=calls.reduce((b,o)=>Math.abs(o.K-spot)<Math.abs(b.K-spot)?o:b,calls[0]);
-    syncIV(Math.round(atm.iv*100));
+  // Set ATM IV from live options — prefer ATM calls, fall back to all options
+  const validOpts=state.liveOptions.filter(o=>o.iv>0.05&&o.iv<5);
+  const calls=validOpts.filter(o=>o.type==='call');
+  const pool=calls.length>0?calls:validOpts;
+  let atmIV=0;
+  if(pool.length>0){
+    const atm=pool.reduce((b,o)=>Math.abs(o.K-spot)<Math.abs(b.K-spot)?o:b,pool[0]);
+    atmIV=atm.iv;
+    syncIV(Math.round(atmIV*100));
+    console.log(`ATM IV set: ${(atmIV*100).toFixed(1)}% from ${atm.type} K=${atm.K} (pool size ${pool.length})`);
   }
   // Grid-search smile fit
-  const fitPts=state.liveOptions.filter(o=>o.iv>0.05&&o.iv<5&&o.bid>0);
+  const fitPts=validOpts.filter(o=>o.bid>0);
   if(fitPts.length>=3){
     const baseIV=state.iv;
     let bestSkew=-0.12,bestConv=0.20,bestErr=Infinity;
@@ -1938,7 +1943,8 @@ function fitSmileAndFinish(spot,status,btn,note=''){
     if(skEl){skEl.value=state.smileSkew;document.getElementById('smileSkewVal').textContent=state.smileSkew.toFixed(2);}
     if(cvEl){cvEl.value=state.smileConv;document.getElementById('smileConvVal').textContent=state.smileConv.toFixed(2);}
   }
-  status.textContent=`Saxo: $${spot.toFixed(2)} · ${state.liveOptions.length} options${note} · smile fitted`;
+  const ivStr=atmIV>0?` · ATM IV ${(atmIV*100).toFixed(0)}%`:'';
+  status.textContent=`Saxo: $${spot.toFixed(2)}${ivStr} · ${state.liveOptions.length} options${note} · smile fitted`;
   status.style.color='var(--grn)';
   btn.textContent='⟳ Refresh';btn.disabled=false;
   if(state.liveOptions.length>0) setLiveLock(true);
@@ -2149,6 +2155,8 @@ async function fetchSaxoData(btn,status){
 
       // Use Saxo Greek IV if available, otherwise back-solve from mid price
       let iv=p.Greeks?.ImpliedVolatility||p.Greeks?.impliedvolatility||0;
+      // Saxo sometimes returns IV as a percentage (e.g. 85.3) instead of decimal (0.853)
+      if(iv>1.5) iv=iv/100;
       if((!iv||iv<=0)&&mid>0&&exp){
         // Back-solve IV from mid price using Black-Scholes
         const T=Math.max(0,(new Date(exp)-new Date())/(365*24*3600*1000));
