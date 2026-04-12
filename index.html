@@ -1884,30 +1884,26 @@ async function fetchSaxoData(btn,status){
     const dSpaces=await saxoJson(`/ref/v1/instruments/contractoptionspaces/${MSTR_ROOT_ID}`);
     console.log('contractoptionspaces/2517:',JSON.stringify(dSpaces).slice(0,800));
 
-    if(dSpaces?.Data?.length>0||dSpaces?.OptionSpace?.length>0){
-      const spaces=dSpaces.Data||dSpaces.OptionSpace||[];
-      console.log(`Got ${spaces.length} spaces, first:`,JSON.stringify(spaces[0]));
-      for(const sp of spaces.slice(0,6)){
-        const spId=sp.OptionSpaceId||sp.Identifier||sp.Id;
-        const exp=sp.ExpiryDate||sp.Expiry||'';
-        if(spId){
-          const dc=await saxoJson(`/ref/v1/instruments/contractoptions?OptionSpaceId=${spId}&$top=200`);
-          if(dc?.Data){
-            dc.Data.forEach(o=>{if(!o.ExpiryDate&&exp) o.ExpiryDate=exp;});
-            optInstruments.push(...dc.Data.filter(o=>o.StrikePrice&&o.PutCall));
-          }
-        }
+    // OptionSpace[] is on the root object (not under Data[])
+    // Each space: { Expiry, SpecificOptions: [{PutCall, StrikePrice, Uic, TradingStatus}] }
+    const spaces=dSpaces?.OptionSpace||[];
+    console.log(`Got ${spaces.length} option spaces`);
+    for(const sp of spaces){
+      const exp=(sp.Expiry||sp.ExpiryDate||'').slice(0,10);
+      if(!exp) continue;
+      for(const o of (sp.SpecificOptions||[])){
+        if(o.TradingStatus!=='Tradable') continue;
+        optInstruments.push({
+          Identifier: o.Uic,
+          ExpiryDate: exp,
+          StrikePrice: o.StrikePrice,
+          PutCall: o.PutCall,       // "Call" or "Put"
+          _type: o.PutCall==='Call'?'call':'put',
+          UnderlyingUic: o.UnderlyingUic||uic,
+        });
       }
-      console.log(`Contracts from contractoptionspaces: ${optInstruments.length}`);
     }
-
-    // Step 3c: also try with UnderlyingUic and expiry list from step 3a
-    if(optInstruments.length===0){
-      const dSpaces2=await saxoJson(`/ref/v1/instruments/contractoptionspaces/${MSTR_ROOT_ID}?UnderlyingUic=${uic}`);
-      console.log('contractoptionspaces with UnderlyingUic:',JSON.stringify(dSpaces2).slice(0,600));
-    }
-
-    console.log(`Total contracts: ${optInstruments.length}`);
+    console.log(`Total contracts extracted: ${optInstruments.length}, sample:`,JSON.stringify(optInstruments[0]||{}));
 
     if(optInstruments.length===0){
       // Saxo OPRA subscription may not include MSTR options — show spot only with clear message
