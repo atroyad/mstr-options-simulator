@@ -1651,13 +1651,21 @@ async function fetchLiveData(){
   }
   try{
     // ── Spot price via Yahoo Finance ──
-    const r=await fetch('https://query1.finance.yahoo.com/v8/finance/chart/MSTR?interval=1m&range=1d',{cache:'no-cache'});
+    // Route through proxy when on GitHub Pages (CORS), direct when on localhost
+    const proxyBase=state.saxoProxyUrl?state.saxoProxyUrl.replace(/\/$/,''):'';
+    const yahooSpotUrl=proxyBase
+      ? `${proxyBase}/yahoo?ticker=MSTR`
+      : 'https://query1.finance.yahoo.com/v8/finance/chart/MSTR?interval=1m&range=1d';
+    const r=await fetch(yahooSpotUrl,{cache:'no-cache'});
     const d=await r.json();
     const spot=d.chart.result[0].meta.regularMarketPrice;
     syncSpot(Math.round(spot*100)/100);
 
     // ── Options chain ──
-    const r2=await fetch('https://query1.finance.yahoo.com/v7/finance/options/MSTR',{cache:'no-cache'});
+    const yahooOptsUrl=proxyBase
+      ? `${proxyBase}/yahoo?ticker=MSTR&type=options`
+      : 'https://query1.finance.yahoo.com/v7/finance/options/MSTR';
+    const r2=await fetch(yahooOptsUrl,{cache:'no-cache'});
     const d2=await r2.json();
     const chain=d2.optionChain.result[0];
     const exps=chain.expirationDates; // unix timestamps
@@ -1784,13 +1792,25 @@ async function fetchSaxoData(btn,status){
     const uic=mstr.Identifier;
 
     // ── Step 2: get MSTR spot price ──
+    // Try infoprices first; fall back to instrument LastClose if NoAccess
     const r2=await fetch(
       `${BASE}/trade/v1/infoprices?Uic=${uic}&AssetType=Stock&FieldGroups=PriceInfo,Quote`,
       {headers:H}
     );
     const d2=await r2.json();
     console.log('Saxo spot price response:',JSON.stringify(d2).slice(0,500));
-    const mid=d2.Quote?.Mid??d2.Quote?.Ask??d2.Quote?.Bid??d2.PriceInfo?.LastTraded??d2.LastClose;
+    let mid=d2.Quote?.Mid??d2.Quote?.Ask??d2.Quote?.Bid??d2.PriceInfo?.LastTraded;
+    // If NoAccess on live quotes, fall back to instrument reference price
+    if((!mid||mid<=0)&&(d2.Quote?.PriceTypeBid==='NoAccess'||d2.Quote?.PriceTypeAsk==='NoAccess')){
+      // Try instrument details which include LastClose
+      const r2b=await fetch(
+        `${BASE}/ref/v1/instruments/details?Uics=${uic}&AssetTypes=Stock&FieldGroups=OrderSetting,TradingConditions`,
+        {headers:H}
+      );
+      const d2b=await r2b.json();
+      console.log('Saxo instrument details:',JSON.stringify(d2b).slice(0,500));
+      mid=d2b.Data?.[0]?.LastClose??d2b.Data?.[0]?.PreviousClose;
+    }
     if(mid&&mid>0) syncSpot(Math.round(mid*100)/100);
     const spot=state.spot;
 
@@ -1823,17 +1843,21 @@ async function fetchSaxoData(btn,status){
 
     // ── Step 4: get prices for all option instruments ──
     // Batch in groups of 50 (Saxo limit)
+    console.log(`Saxo: ${optInstruments.length} option instruments found, fetching prices…`);
+    console.log('Saxo option instrument sample:',JSON.stringify(optInstruments[0]).slice(0,500));
     const uics=optInstruments.map(o=>o.Identifier);
     const priceData=[];
     for(let i=0;i<uics.length;i+=50){
       const batch=uics.slice(i,i+50).join(',');
       const rp=await fetch(
-        `${BASE}/trade/v1/infoprices/list?Uics=${batch}&AssetType=StockOption&FieldGroups=PriceInfo,DisplayAndFormat,Greeks`,
+        `${BASE}/trade/v1/infoprices/list?Uics=${batch}&AssetType=StockOption&FieldGroups=PriceInfo,DisplayAndFormat,Greeks,Quote`,
         {headers:H}
       );
       const dp=await rp.json();
+      if(i===0) console.log('Saxo infoprices/list response (batch 0):',JSON.stringify(dp).slice(0,800));
       if(dp.Data) priceData.push(...dp.Data);
     }
+    console.log(`Saxo: ${priceData.length} option price records received`);
 
     // ── Step 5: map to liveOptions format ──
     // Log first item so we can see the actual data shape from Saxo live
