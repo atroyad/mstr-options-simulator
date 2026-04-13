@@ -330,7 +330,11 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         </div>
 
         <!-- IV Surface selector -->
-        <label class="lbl" style="margin-top:8px">IV Surface (P&L + Heatmap)</label>
+        <label class="lbl" style="margin-top:8px">IV Surface — OTM/ITM Pricing</label>
+        <div style="font-size:8px;color:var(--mut);margin-bottom:3px;line-height:1.4">
+          Controls how IV varies across <em>strikes</em> at a given spot (shape of the smile).
+          Separate from the vol-correlation band below.
+        </div>
         <div style="display:flex;gap:3px;margin-bottom:4px">
           <button id="ivsFlatBtn" onclick="setIVSurface('flat')"
             style="flex:1;padding:3px 0;font-size:9px;border:1px solid var(--bdr);
@@ -363,6 +367,39 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
             Conv: curvature — both wings raised (0 = pure skew, 0.5+ = strong smile).<br>
             In Live mode, these auto-fit to market data.
           </div>
+        </div>
+
+        <!-- Spot-vol correlation band -->
+        <label class="lbl" style="margin-top:10px">Spot-Vol Correlation Band</label>
+        <div style="font-size:8px;color:var(--mut);margin-bottom:4px;line-height:1.4">
+          Grey band on P&L chart shows how IV moving with spot changes outcomes.
+          Down → IV spikes (protects long vega). Up → IV compresses (caps gains).
+        </div>
+        <div class="row" style="gap:4px;margin-bottom:3px">
+          <span style="color:var(--mut);min-width:12px;font-size:9px">ρ</span>
+          <input type="range" id="spotVolRhoIn" min="0" max="1.5" step="0.05" value="0.75"
+            style="flex:1" oninput="state.spotVolRho=+this.value;document.getElementById('spotVolRhoVal').textContent=(+this.value).toFixed(2);renderChart()">
+          <span id="spotVolRhoVal" style="font-family:monospace;color:var(--ylw);min-width:34px;text-align:right">0.75</span>
+        </div>
+        <div style="font-size:8px;color:var(--mut);line-height:1.4;margin-bottom:5px">
+          0 = no correlation · 0.5 = mild · 0.75 = typical MSTR · 1.5 = extreme.<br>
+          Band uses IV(S') = ATM-IV × (S/S')^ρ. Set ρ=0 to hide band.
+        </div>
+
+        <!-- Heatmap vol-correlation toggle -->
+        <label class="lbl" style="margin-top:2px">Heatmap Mode</label>
+        <div style="display:flex;gap:3px;margin-bottom:2px">
+          <button id="hmConstBtn" onclick="setHmMode(false)"
+            style="flex:1;padding:3px 0;font-size:9px;border:1px solid var(--bdr);
+              border-radius:3px;cursor:pointer;background:var(--blu);color:#000;font-weight:700">
+            Constant IV</button>
+          <button id="hmCorrBtn" onclick="setHmMode(true)"
+            style="flex:1;padding:3px 0;font-size:9px;border:1px solid var(--bdr);
+              border-radius:3px;cursor:pointer;background:var(--sur2);color:var(--mut)">
+            Vol-Correlated</button>
+        </div>
+        <div style="font-size:8px;color:var(--mut);line-height:1.4">
+          Vol-Correlated: each heatmap cell uses IV adjusted for the scenario spot using ρ above.
         </div>
       </div>
     </div>
@@ -775,7 +812,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
   <!-- Heatmap -->
   <div class="card" id="hmCard">
     <div class="hd">
-      <h3>Options P&amp;L Heatmap — Spot × Time Remaining</h3>
+      <h3 id="hmTitle">Options P&amp;L Heatmap — Spot × Time (Constant IV)</h3>
       <span id="hmTip" style="font-size:9px;color:var(--mut);font-family:monospace"></span>
     </div>
     <div class="bd">
@@ -922,6 +959,8 @@ const state={
   saxoProxyUrl:'',     // Cloudflare Worker proxy URL for token exchange (avoids CORS)
   saxoContractCache:null,    // cached ATM contracts array (avoids re-discovery on auto-refresh)
   saxoContractCacheTime:0,   // ms timestamp of last cache fill
+  spotVolRho:0.75,           // spot-vol elasticity: IV ∝ (S'/S)^-ρ. 0=none, 0.5=mild, 1=strong
+  hmVolCorr:false,           // heatmap mode: false=constant IV, true=vol-correlated
 };
 
 // ── Auto-refresh timer ──
@@ -2212,6 +2251,29 @@ function setIVSurface(v){
   renderAll();
 }
 
+function setHmMode(corr){
+  state.hmVolCorr=corr;
+  document.getElementById('hmConstBtn').style.background=corr?'var(--sur2)':'var(--blu)';
+  document.getElementById('hmConstBtn').style.color=corr?'var(--mut)':'#000';
+  document.getElementById('hmConstBtn').style.fontWeight=corr?'400':'700';
+  document.getElementById('hmCorrBtn').style.background=corr?'var(--ylw)':'var(--sur2)';
+  document.getElementById('hmCorrBtn').style.color=corr?'#000':'var(--mut)';
+  document.getElementById('hmCorrBtn').style.fontWeight=corr?'700':'400';
+  document.getElementById('hmTitle').textContent=
+    'Options P&L Heatmap — Spot × Time ('+(corr?'Vol-Correlated':'Constant IV')+')';
+  renderHeatmap();
+}
+
+// ── Spot-vol correlated IV: IV(S') = baseIV × (currentSpot/S')^ρ ──
+// ρ=0: no correlation (current behaviour)
+// ρ=0.75: typical MSTR (large drop → big IV spike, large rally → vol crush)
+// Applies to the entire ATM IV level — smile shape (skew/conv) still applies on top.
+function volAdjIV(scSpot,baseIV){
+  const rho=state.spotVolRho||0;
+  if(rho===0||scSpot<=0||state.spot<=0) return baseIV;
+  return baseIV*Math.pow(state.spot/scSpot,rho);
+}
+
 // ── Vol smile model: log-moneyness parameterisation ──
 // smileIV(K, S, baseIV) gives the IV surface value for strike K when spot is S.
 // Parameters default to state values if not passed (live-fitting updates state).
@@ -2388,6 +2450,54 @@ function buildDatasets(sp){
     borderWidth:c.w,borderDash:c.dash,pointRadius:0,tension:0.1,
   }));
 
+  // ── Spot-vol correlation band (grey shaded region) ──
+  // Shows P&L if IV moves with spot: IV(S') = ATM-IV × (currentSpot/S')^ρ
+  // Only shown when ρ > 0 and there are legs with finite time value (not just expiry).
+  const rho=state.spotVolRho||0;
+  const hasTimedLines=cfgs.some(c=>c.k!=='expiry'&&state.lines[c.k]);
+  if(rho>0.01&&hasTimedLines&&state.legs.length>0){
+    // Compute vol-correlated P&L for each visible timed line
+    const timedCfgs=cfgs.filter(c=>c.k!=='expiry'&&state.lines[c.k]);
+    for(const c of timedCfgs){
+      const corrData=sp.map(S=>{
+        let p=0;
+        for(const l of state.legs){
+          const sign=l.action==='buy'?1:-1;
+          const Tnow=getT(l.exp);
+          const ep=entryPx(l);
+          const adjBase=volAdjIV(S,state.iv);
+          const adjIV=state.ivSurface==='smile'?smileIV(l.K,S,adjBase):adjBase;
+          const elap=c.k==='t0'?0:parseInt(c.k.slice(1));
+          const Tfut=Math.max(0,Tnow-elap/365);
+          const cp=bsPrice(S,l.K,Tfut,state.rate,adjIV,l.type);
+          p+=sign*(cp-ep)*l.qty*100;
+        }
+        return p;
+      });
+      const baseData=ds.find(d=>d.label===c.label)?.data||corrData;
+      // Upper boundary = max(base, corr) per point, lower = min
+      const upper=sp.map((_,i)=>Math.max(baseData[i],corrData[i]));
+      const lower=sp.map((_,i)=>Math.min(baseData[i],corrData[i]));
+      // Push lower first, then upper with fill to previous dataset
+      const lowerIdx=ds.length;
+      ds.push({
+        label:`${c.label} (vol-corr lower)`,
+        data:lower,
+        borderColor:'transparent',backgroundColor:'transparent',
+        borderWidth:0,pointRadius:0,tension:0.1,
+        fill:false,_isBand:true,
+      });
+      ds.push({
+        label:`Vol-corr band (${c.label}, ρ=${rho.toFixed(2)})`,
+        data:upper,
+        borderColor:'rgba(180,180,180,0.25)',backgroundColor:'rgba(150,150,150,0.12)',
+        borderWidth:1,borderDash:[2,3],pointRadius:0,tension:0.1,
+        fill:{target:lowerIdx,above:'rgba(150,150,150,0.12)',below:'rgba(150,150,150,0.12)'},
+        _isBand:true,
+      });
+    }
+  }
+
   // vs Shares: equivalent-capital shares P&L (for buy legs / LEAPs)
   if(state.lines.shares&&state.legs.length){
     let totalCost=0;
@@ -2510,13 +2620,18 @@ function renderChart(){
       responsive:true,maintainAspectRatio:false,animation:{duration:80},
       interaction:{mode:'index',intersect:false},
       plugins:{
-        legend:{labels:{color:'#8b949e',font:{size:9},usePointStyle:true,boxWidth:7}},
+        legend:{labels:{color:'#8b949e',font:{size:9},usePointStyle:true,boxWidth:7,
+          filter:item=>!item.text.includes('vol-corr lower'),
+        }},
         tooltip:{
           backgroundColor:'#161b22',borderColor:'#30363d',borderWidth:1,
           titleColor:'#c9d1d9',bodyColor:'#8b949e',
           callbacks:{
             title:i=>`MSTR Spot: $${i[0].label}`,
-            label:i=>`${i.dataset.label}: ${i.raw>=0?'+':''}$${Math.round(i.raw).toLocaleString()}`,
+            label:i=>{
+              if(i.dataset._isBand) return null;
+              return`${i.dataset.label}: ${i.raw>=0?'+':''}$${Math.round(i.raw).toLocaleString()}`;
+            },
           }
         }
       },
@@ -2577,7 +2692,14 @@ function renderHeatmap(){
       for(const l of state.legs){
         const rem=Math.max(0,getT(l.exp)*365-(maxDays-days));
         const sign=l.action==='buy'?1:-1;
-        const cellIV=scenarioIV(l,spot); // smile at this cell's spot, or flat, or back-solved
+        let cellIV;
+        if(state.hmVolCorr){
+          // Vol-correlated: base IV adjusted for scenario spot, then smile shape on top
+          const adjBase=volAdjIV(spot,state.iv);
+          cellIV=state.ivSurface==='smile'?smileIV(l.K,spot,adjBase):adjBase;
+        } else {
+          cellIV=scenarioIV(l,spot); // smile or flat at constant ATM IV
+        }
         pnl+=sign*(bsPrice(spot,l.K,rem/365,state.rate,cellIV,l.type)-entryPx(l))*l.qty*100;
       }
       grid[r][c]=pnl;
@@ -2609,6 +2731,41 @@ function renderHeatmap(){
     }
     ctx.fillStyle=`rgb(${rv},${gv},${bv})`;
     ctx.fillRect(PAD_L+c*cW,r*rH,cW-0.5,rH-0.5);
+  }
+
+  // ── Realistic vol path diagonal band (constant-IV mode only) ──
+  // Highlights cells where the vol-correlated P&L differs meaningfully from constant-IV.
+  // The band traces the region where realised outcomes diverge from the model assumption.
+  if(!state.hmVolCorr&&(state.spotVolRho||0)>0.01){
+    const rho=state.spotVolRho;
+    for(let r=0;r<ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        const spot=lo+(hi-lo)*c/(COLS-1);
+        const days=maxDays*(1-r/(ROWS-1));
+        let corrPnl=0;
+        for(const l of state.legs){
+          const rem=Math.max(0,getT(l.exp)*365-(maxDays-days));
+          const sign=l.action==='buy'?1:-1;
+          const adjBase=volAdjIV(spot,state.iv);
+          const adjIV=state.ivSurface==='smile'?smileIV(l.K,spot,adjBase):adjBase;
+          corrPnl+=sign*(bsPrice(spot,l.K,rem/365,state.rate,adjIV,l.type)-entryPx(l))*l.qty*100;
+        }
+        const diff=corrPnl-grid[r][c]; // positive = reality better, negative = worse
+        const absDiff=Math.abs(diff);
+        const scale=maxGain>0?absDiff/(maxGain*0.3):0;
+        if(scale>0.08){ // only mark cells where vol-adjustment changes P&L meaningfully
+          const alpha=Math.min(0.45,scale*0.5);
+          // Green tint = vol adjustment helps you (long vega: down moves protected)
+          // Red tint = vol adjustment hurts you (up moves: vol crush caps gains)
+          const col=diff>0?`rgba(63,185,80,${alpha})`:`rgba(248,81,73,${alpha})`;
+          ctx.fillStyle=col;
+          ctx.fillRect(PAD_L+c*cW,r*rH,cW-0.5,rH-0.5);
+        }
+      }
+    }
+    // Label
+    ctx.fillStyle='rgba(255,255,255,0.55)';ctx.font='7px monospace';ctx.textAlign='left';
+    ctx.fillText(`ρ=${rho.toFixed(2)} vol-corr overlay`,PAD_L+2,ROWS*rH-4);
   }
 
   // Zero-crossing line: find column where P&L crosses from negative to positive
