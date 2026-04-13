@@ -880,7 +880,7 @@ function initResizers() {
     axis:'y',
     getSize:()=>document.getElementById('hmCard').offsetHeight,
     setSize:h=>{h=Math.max(70,Math.min(500,h));document.getElementById('hmCard').style.height=h+'px';},
-    onMove:()=>renderHeatmap(),
+    onMove:()=>scheduleHeatmap(),
     onDone:()=>renderHeatmap()
   });
 }
@@ -2668,6 +2668,14 @@ function renderChart(){
 // ═══════════════════════════════════════════════════════
 // HEATMAP
 // ═══════════════════════════════════════════════════════
+
+// RAF debounce: at most one heatmap render per animation frame.
+let _hmRaf=null;
+function scheduleHeatmap(){
+  if(_hmRaf) cancelAnimationFrame(_hmRaf);
+  _hmRaf=requestAnimationFrame(()=>{_hmRaf=null;renderHeatmap();});
+}
+
 function renderHeatmap(){
   const canvas=document.getElementById('heatmapCanvas');
   const par=canvas.parentElement;
@@ -2684,150 +2692,158 @@ function renderHeatmap(){
     ctx.fillText('Load a preset or add legs to see heatmap',cw/2,ch/2);return;
   }
   const PAD_B=14,PAD_L=26;
-  const COLS=80,ROWS=Math.max(6,Math.floor((ch-PAD_B)/6));
+  const COLS=70,ROWS=Math.max(6,Math.floor((ch-PAD_B)/7));
   const cW=(cw-PAD_L)/COLS,rH=(ch-PAD_B)/ROWS;
-  // Use same x-axis range as P&L chart so current-spot line visually moves with slider
   const lo=+document.getElementById('rMin').value;
   const hi=+document.getElementById('rMax').value;
   const maxDays=Math.max(30,...state.legs.map(l=>getT(l.exp)*365));
+  const hasVolCorr=!state.hmVolCorr&&(state.spotVolRho||0)>0.01;
 
-  const grid=[];let minP=Infinity,maxP=-Infinity;
+  // ── Pre-hoist per-leg constants (avoids recomputing inside the hot loop) ──
+  const legK=state.legs.map(l=>({
+    sign:l.action==='buy'?1:-1,
+    ep:entryPx(l),
+    Tnow_days:getT(l.exp)*365,
+    K:l.K,type:l.type,qty:l.qty,
+  }));
+
+  // ── Single-pass grid computation (base + corr in one loop) ──
+  const CELLS=COLS*ROWS;
+  const baseArr=new Float64Array(CELLS);
+  const corrArr=hasVolCorr?new Float64Array(CELLS):null;
+  let minP=Infinity,maxP=-Infinity;
+
   for(let r=0;r<ROWS;r++){
-    grid[r]=[];
+    const days=maxDays*(1-r/(ROWS-1));
     for(let c=0;c<COLS;c++){
       const spot=lo+(hi-lo)*c/(COLS-1);
-      const days=maxDays*(1-r/(ROWS-1));
       let pnl=0;
-      for(const l of state.legs){
-        const rem=Math.max(0,getT(l.exp)*365-(maxDays-days));
-        const sign=l.action==='buy'?1:-1;
-        let cellIV;
+      for(const l of legK){
+        const rem=Math.max(0,l.Tnow_days-(maxDays-days))/365;
+        let iv;
         if(state.hmVolCorr){
-          // Vol-correlated: base IV adjusted for scenario spot, then smile shape on top
-          const adjBase=volAdjIV(spot,state.iv);
-          cellIV=state.ivSurface==='smile'?smileIV(l.K,spot,adjBase):adjBase;
+          const ab=volAdjIV(spot,state.iv);
+          iv=state.ivSurface==='smile'?smileIV(l.K,spot,ab):ab;
         } else {
-          cellIV=scenarioIV(l,spot); // smile or flat at constant ATM IV
+          iv=state.ivSurface==='smile'?smileIV(l.K,spot,state.iv):state.iv;
         }
-        pnl+=sign*(bsPrice(spot,l.K,rem/365,state.rate,cellIV,l.type)-entryPx(l))*l.qty*100;
+        pnl+=l.sign*(bsPrice(spot,l.K,rem,state.rate,iv,l.type)-l.ep)*l.qty*100;
       }
-      grid[r][c]=pnl;
+      const idx=r*COLS+c;
+      baseArr[idx]=pnl;
       if(pnl<minP)minP=pnl;if(pnl>maxP)maxP=pnl;
+      // Compute corr P&L in same pass to avoid second full loop
+      if(corrArr){
+        let cpnl=0;
+        for(const l of legK){
+          const rem=Math.max(0,l.Tnow_days-(maxDays-days))/365;
+          const ab=volAdjIV(spot,state.iv);
+          const iv=state.ivSurface==='smile'?smileIV(l.K,spot,ab):ab;
+          cpnl+=l.sign*(bsPrice(spot,l.K,rem,state.rate,iv,l.type)-l.ep)*l.qty*100;
+        }
+        corrArr[idx]=cpnl;
+      }
     }
   }
 
-  // Normalise gains and losses INDEPENDENTLY so that:
-  // - the max profit cell always shows full green
-  // - the max loss cell always shows full red
-  // Without this, a short call with +$1,500 max gain and -$140,000 max loss
-  // would make every profitable cell appear nearly black.
   const maxGain=Math.max(maxP,1);
   const maxLoss=Math.max(Math.abs(minP),1);
 
-  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
-    const pnl=grid[r][c];
-    let rv,gv,bv;
-    if(pnl>=0){
-      const t=pnl/maxGain;           // 0 → 1
-      rv=Math.round(20*(1-t));
-      gv=Math.round(185*t+30*(1-t)); // dark green → bright green
-      bv=Math.round(50*t);
-    } else {
-      const t=(-pnl)/maxLoss;        // 0 → 1
-      rv=Math.round(200*t+50*(1-t)); // dark red → bright red
-      gv=Math.round(30*(1-t));
-      bv=Math.round(30*(1-t));
+  // Compute max diff for overlay normalisation in the same data we already have
+  let maxAbsDiff=1;
+  if(corrArr){
+    for(let i=0;i<CELLS;i++){
+      const d=Math.abs(corrArr[i]-baseArr[i]);
+      if(d>maxAbsDiff)maxAbsDiff=d;
     }
-    ctx.fillStyle=`rgb(${rv},${gv},${bv})`;
-    ctx.fillRect(PAD_L+c*cW,r*rH,cW-0.5,rH-0.5);
   }
 
-  // ── Vol-correlation overlay (constant-IV mode) ──
-  // Each cell gets a green or red tint proportional to how much the vol-adjusted P&L
-  // differs from the constant-IV P&L. Green = reality better (IV spike helps long vega),
-  // red = reality worse (vol crush caps gains). Normalised against the max diff in the grid.
-  if(!state.hmVolCorr&&(state.spotVolRho||0)>0.01){
-    const rho=state.spotVolRho;
-    const diffGrid=[];
-    let maxAbsDiff=1; // avoid /0
-    for(let r=0;r<ROWS;r++){
-      diffGrid[r]=[];
-      for(let c=0;c<COLS;c++){
-        const spot=lo+(hi-lo)*c/(COLS-1);
-        const days=maxDays*(1-r/(ROWS-1));
-        let corrPnl=0;
-        for(const l of state.legs){
-          const rem=Math.max(0,getT(l.exp)*365-(maxDays-days));
-          const sign=l.action==='buy'?1:-1;
-          const adjBase=volAdjIV(spot,state.iv);
-          const adjIV=state.ivSurface==='smile'?smileIV(l.K,spot,adjBase):adjBase;
-          corrPnl+=sign*(bsPrice(spot,l.K,rem/365,state.rate,adjIV,l.type)-entryPx(l))*l.qty*100;
+  // ── Pixel buffer rendering (one putImageData instead of ~1400 fillRect calls) ──
+  const pw=Math.round(cw*dpr),ph=Math.round(ch*dpr);
+  const imgData=ctx.createImageData(pw,ph);
+  const px=imgData.data;
+
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const idx=r*COLS+c;
+      const pnl=baseArr[idx];
+      // Base color
+      let rv,gv,bv;
+      if(pnl>=0){
+        const t=pnl/maxGain;
+        rv=Math.round(20*(1-t));gv=Math.round(185*t+30*(1-t));bv=Math.round(50*t);
+      } else {
+        const t=(-pnl)/maxLoss;
+        rv=Math.round(200*t+50*(1-t));gv=Math.round(30*(1-t));bv=Math.round(30*(1-t));
+      }
+      // Blend vol-corr overlay tint onto base color
+      if(corrArr){
+        const diff=corrArr[idx]-pnl;
+        const ad=Math.abs(diff)/maxAbsDiff;
+        if(ad>0.03){
+          const a=Math.min(0.7,ad*0.75);
+          if(diff>0){rv=Math.round(rv*(1-a)+63*a);gv=Math.round(gv*(1-a)+185*a);bv=Math.round(bv*(1-a)+80*a);}
+          else      {rv=Math.round(rv*(1-a)+248*a);gv=Math.round(gv*(1-a)+81*a); bv=Math.round(bv*(1-a)+73*a);}
         }
-        const diff=corrPnl-grid[r][c];
-        diffGrid[r][c]=diff;
-        if(Math.abs(diff)>maxAbsDiff) maxAbsDiff=Math.abs(diff);
+      }
+      // Write pixel rectangle to buffer (accounts for DPR)
+      const x0=Math.round((PAD_L+c*cW)*dpr),   x1=Math.round((PAD_L+(c+1)*cW)*dpr);
+      const y0=Math.round(r*rH*dpr),             y1=Math.round((r+1)*rH*dpr);
+      for(let y=y0;y<y1;y++){
+        for(let x=x0;x<x1;x++){
+          const pi=(y*pw+x)*4;
+          px[pi]=rv;px[pi+1]=gv;px[pi+2]=bv;px[pi+3]=255;
+        }
       }
     }
-    for(let r=0;r<ROWS;r++){
-      for(let c=0;c<COLS;c++){
-        const diff=diffGrid[r][c];
-        if(Math.abs(diff)<maxAbsDiff*0.03) continue; // skip near-zero cells
-        const alpha=Math.min(0.7,Math.abs(diff)/maxAbsDiff*0.75);
-        ctx.fillStyle=diff>0?`rgba(63,185,80,${alpha})`:`rgba(248,81,73,${alpha})`;
-        ctx.fillRect(PAD_L+c*cW,r*rH,cW-0.5,rH-0.5);
-      }
-    }
+  }
+  ctx.putImageData(imgData,0,0); // single GPU upload
+
+  // ── Overlay label (constant-IV + ρ) ──
+  if(corrArr){
     ctx.fillStyle='rgba(255,255,255,0.7)';ctx.font='7px monospace';ctx.textAlign='left';
-    ctx.fillText(`ρ=${rho.toFixed(2)}: green=vol spike helps · red=vol crush hurts`,PAD_L+2,ROWS*rH-4);
+    ctx.fillText(`ρ=${state.spotVolRho.toFixed(2)}: green=vol spike helps · red=vol crush hurts`,PAD_L+2,ROWS*rH-4);
   }
 
-  // Zero-crossing line: find column where P&L crosses from negative to positive
-  // Draw a white contour line along the breakeven boundary
+  // ── Zero-crossing (breakeven) contour line ──
+  ctx.fillStyle='rgba(255,255,255,0.75)';
   for(let r=0;r<ROWS-1;r++){
     for(let c=0;c<COLS-1;c++){
-      const v00=grid[r][c], v01=grid[r][c+1];
-      const v10=grid[r+1][c];
-      // Horizontal crossing (sign change between adjacent columns)
+      const v00=baseArr[r*COLS+c],v01=baseArr[r*COLS+c+1];
       if((v00>=0)!==(v01>=0)){
         const xFrac=v00/(v00-v01);
         const xPx=PAD_L+(c+xFrac)*cW;
-        ctx.fillStyle='rgba(255,255,255,0.7)';
         ctx.fillRect(xPx-0.5,r*rH,1.5,rH);
       }
     }
   }
 
-  // Current spot vertical line — moves when spot slider changes (same x-axis as P&L chart)
+  // ── Current spot vertical line ──
   const spotFrac=Math.max(0,Math.min(1,(state.spot-lo)/(hi-lo)));
   const mxPx=PAD_L+spotFrac*(COLS-1)*cW+cW/2;
   ctx.strokeStyle='rgba(255,215,0,.9)';ctx.lineWidth=1.5;ctx.setLineDash([3,3]);
   ctx.beginPath();ctx.moveTo(mxPx,0);ctx.lineTo(mxPx,ROWS*rH);ctx.stroke();
   ctx.setLineDash([]);
-  // Spot price label on the line
   ctx.fillStyle='rgba(255,215,0,.9)';ctx.font='bold 8px monospace';ctx.textAlign='center';
   ctx.fillText('$'+Math.round(state.spot),mxPx,10);
 
-  // X-axis labels (spot price)
+  // ── Axis labels ──
   ctx.fillStyle='#8b949e';ctx.font='8px monospace';ctx.textAlign='center';
   const nT=cw<350?3:6;
   for(let i=0;i<=nT;i++){
     const c=Math.round(i*(COLS-1)/nT);
     ctx.fillText('$'+Math.round(lo+(hi-lo)*c/(COLS-1)),PAD_L+c*cW+cW/2,ROWS*rH+11);
   }
-
-  // Y-axis labels (time)
   ctx.textAlign='right';
   ctx.fillText(Math.round(maxDays)+'d',PAD_L-2,8);
   ctx.fillText('0d',PAD_L-2,ROWS*rH-2);
 
-  // Color scale legend (top-right corner)
+  // ── Color scale legend ──
   const fmtK=v=>v>=1000?'+'+(v/1000).toFixed(0)+'k':v>0?'+'+v.toFixed(0):v>=-1000?v.toFixed(0):'-'+(Math.abs(v)/1000).toFixed(0)+'k';
   const legW=60,legH=8,legX=cw-legW-4,legY=2;
-  // Green gradient (profit)
   const gGrad=ctx.createLinearGradient(legX,0,legX+legW/2,0);
   gGrad.addColorStop(0,'rgb(20,50,20)');gGrad.addColorStop(1,'rgb(20,185,50)');
   ctx.fillStyle=gGrad;ctx.fillRect(legX,legY,legW/2,legH);
-  // Red gradient (loss)
   const rGrad=ctx.createLinearGradient(legX+legW/2,0,legX+legW,0);
   rGrad.addColorStop(0,'rgb(200,30,30)');rGrad.addColorStop(1,'rgb(50,30,30)');
   ctx.fillStyle=rGrad;ctx.fillRect(legX+legW/2,legY,legW/2,legH);
@@ -2974,7 +2990,7 @@ function renderLegs(){
 }
 
 function renderAll(){
-  renderLegs();renderGreeks();renderIncomeSummary();renderChart();renderHeatmap();
+  renderLegs();renderGreeks();renderIncomeSummary();renderChart();scheduleHeatmap();
   renderRollSim();
   const lc=document.getElementById('leapContent');
   if(lc&&lc.style.display!=='none')renderLeapScanner();
@@ -3197,7 +3213,7 @@ window.addEventListener('load',()=>{
 let rzTimer;
 window.addEventListener('resize',()=>{
   clearTimeout(rzTimer);
-  rzTimer=setTimeout(()=>{renderChart();renderHeatmap();},80);
+  rzTimer=setTimeout(()=>{renderChart();renderHeatmap();},80); // full quality after resize
 });
 </script>
 </body>
