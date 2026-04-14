@@ -681,7 +681,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <input type="hidden" id="rMin" value="50">
         <input type="hidden" id="rMax" value="500">
         <div class="sc-row" id="spotRangeRow" style="font-size:9px;color:var(--mut);padding:1px 0 2px;gap:6px">
-          <span>📐 Drag to pan · Scroll to zoom · Double-click to reset</span>
+          <span>📐 Axis-drag to scale · Chart-drag to pan · Scroll to zoom · Dbl-click to reset</span>
           <span id="chartRangeHint" style="margin-left:auto;font-family:monospace;color:var(--mut)">$50–$500</span>
           <button onclick="resetChartZoom()" style="font-size:8px;padding:1px 5px;border:1px solid var(--bdr);
             border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer">Reset</button>
@@ -2438,6 +2438,64 @@ function resetChartZoom(){
   renderChart();
 }
 
+// ── Axis-drag-to-scale ─────────────────────────────────
+// Dragging on the Y-axis area scales Y only; dragging on
+// the X-axis area scales X only; body drags remain pans.
+let _axisDrag=null;
+function setupAxisDrag(){
+  const canvas=document.getElementById('pnlChart');
+  if(!canvas) return;
+
+  canvas.addEventListener('mousedown',e=>{
+    if(!chart||e.button!==0) return;
+    const rect=canvas.getBoundingClientRect();
+    const x=(e.clientX-rect.left)*(canvas.width/rect.width);
+    const y=(e.clientY-rect.top)*(canvas.height/rect.height);
+    const ca=chart.chartArea;
+    let axis=null;
+    if(x<ca.left && y>=ca.top && y<=ca.bottom) axis='y';
+    else if(y>ca.bottom && x>=ca.left && x<=ca.right) axis='x';
+    if(!axis) return;
+    // Prevent the zoom plugin from also starting a pan
+    e.preventDefault();
+    e.stopPropagation();
+    chart.options.plugins.zoom.pan.enabled=false;
+    chart.update('none');
+    // Anchor = data value under the cursor → stays fixed while scaling
+    const sc=chart.scales[axis];
+    const anchor=sc.getValueForPixel(axis==='y'?y:x);
+    _axisDrag={axis,startX:x,startY:y,anchor,origMin:sc.min,origMax:sc.max};
+  },{capture:true});
+
+  window.addEventListener('mousemove',e=>{
+    if(!_axisDrag||!chart) return;
+    const canvas=document.getElementById('pnlChart');
+    const rect=canvas.getBoundingClientRect();
+    const x=(e.clientX-rect.left)*(canvas.width/rect.width);
+    const y=(e.clientY-rect.top)*(canvas.height/rect.height);
+    const {axis,startX,startY,anchor,origMin,origMax}=_axisDrag;
+    // dy<0 = drag up = zoom out; dy>0 = drag down = zoom in
+    // dx>0 = drag right = zoom out; dx<0 = drag left = zoom in
+    const delta= axis==='y' ? startY-y : x-startX;
+    const factor=Math.exp(-delta*0.006); // >1 = expand, <1 = compress
+    const newMin=anchor-(anchor-origMin)*factor;
+    const newMax=anchor+(origMax-anchor)*factor;
+    chart.scales[axis].options.min=newMin;
+    chart.scales[axis].options.max=newMax;
+    chart.update('none');
+    if(axis==='x') syncChartRange();
+  });
+
+  window.addEventListener('mouseup',()=>{
+    if(!_axisDrag) return;
+    _axisDrag=null;
+    if(chart){
+      chart.options.plugins.zoom.pan.enabled=true;
+      chart.update('none');
+    }
+  });
+}
+
 function buildDatasets(sp){
   const cfgs=[
     {k:'expiry',label:'At Expiry',color:'#3fb950',dash:[],w:2.5},
@@ -2745,6 +2803,8 @@ function renderChart(){
   });
   // Double-click resets zoom
   document.getElementById('pnlChart').ondblclick=()=>resetChartZoom();
+  // Axis-drag-to-scale: drag on Y-axis area scales Y; drag on X-axis area scales X
+  setupAxisDrag();
 }
 
 // ═══════════════════════════════════════════════════════
