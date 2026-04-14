@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>MSTR Options Income Simulator</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 :root {
   --bg:#0d1117; --sur:#161b22; --sur2:#21262d; --bdr:#30363d;
@@ -675,15 +677,14 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <div id="customDayPills" style="display:flex;gap:3px;flex-wrap:wrap;width:100%;min-height:0"></div>
       </div>
       <div class="bd">
-        <div class="sc-row" id="spotRangeRow">
-          <label>Spot range</label>
-          <input type="range" id="rMin" min="5" max="400" value="50" style="flex:1"
-            oninput="document.getElementById('dMin').textContent='$'+this.value;renderChart()">
-          <span id="dMin" class="mono" style="font-size:10px;color:var(--mut);min-width:30px">$50</span>
-          <span style="color:var(--mut)">–</span>
-          <input type="range" id="rMax" min="100" max="1200" value="500" style="flex:1"
-            oninput="document.getElementById('dMax').textContent='$'+this.value;renderChart()">
-          <span id="dMax" class="mono" style="font-size:10px;color:var(--mut);min-width:38px">$500</span>
+        <!-- Hidden inputs kept for heatmap x-axis sync -->
+        <input type="hidden" id="rMin" value="50">
+        <input type="hidden" id="rMax" value="500">
+        <div class="sc-row" id="spotRangeRow" style="font-size:9px;color:var(--mut);padding:1px 0 2px;gap:6px">
+          <span>📐 Drag to pan · Scroll to zoom · Double-click to reset</span>
+          <span id="chartRangeHint" style="margin-left:auto;font-family:monospace;color:var(--mut)">$50–$500</span>
+          <button onclick="resetChartZoom()" style="font-size:8px;padding:1px 5px;border:1px solid var(--bdr);
+            border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer">Reset</button>
         </div>
         <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
       </div>
@@ -2413,6 +2414,30 @@ function chartSpots(){
   return a;
 }
 
+// Keep heatmap x-axis in sync with chart pan/zoom range
+function syncChartRange(){
+  if(!chart||!chart.scales?.x) return;
+  const sc=chart.scales.x;
+  const labels=chart.data.labels;
+  if(!labels||!labels.length) return;
+  // x-scale min/max are label indices after zoom — convert to spot values
+  const lo=Math.max(1,Math.round(labels[Math.max(0,Math.floor(sc.min))]||+document.getElementById('rMin').value));
+  const hi=Math.round(labels[Math.min(labels.length-1,Math.ceil(sc.max))]||+document.getElementById('rMax').value);
+  document.getElementById('rMin').value=lo;
+  document.getElementById('rMax').value=hi;
+  document.getElementById('chartRangeHint').textContent=`$${lo}–$${hi}`;
+  scheduleHeatmap();
+}
+
+function resetChartZoom(){
+  if(chart?.resetZoom) chart.resetZoom();
+  document.getElementById('rMin').value=50;
+  document.getElementById('rMax').value=500;
+  document.getElementById('chartRangeHint').textContent='$50–$500';
+  scheduleHeatmap();
+  renderChart();
+}
+
 function buildDatasets(sp){
   const cfgs=[
     {k:'expiry',label:'At Expiry',color:'#3fb950',dash:[],w:2.5},
@@ -2667,11 +2692,39 @@ function renderChart(){
           callbacks:{
             title:i=>`MSTR Spot: $${i[0].label}`,
             label:i=>{
-              if(i.dataset._isBand||i.dataset.label?.startsWith('_band_lower_')) return null;
+              if(i.dataset.label?.startsWith('_band_lower_')) return null;
+              if(i.dataset._isBand){
+                // Find the matching lower boundary dataset to compute the range
+                const upperLabel=i.dataset.label; // e.g. "Vol-corr band · Today (ρ=0.75)"
+                const lineName=upperLabel.replace(/^Vol-corr band · /,'').replace(/ \(ρ=.*\)$/,'');
+                const lowerDs=i.chart.data.datasets.find(d=>d.label==='_band_lower_'+lineName.replace(/\+/,'custom').replace(/d$/,''));
+                // Simpler: use the two values at this index
+                const upperVal=i.raw;
+                // find lower val from same index in the hidden lower dataset
+                const allDs=i.chart.data.datasets;
+                const myIdx=allDs.indexOf(i.dataset);
+                const lowerVal=myIdx>0?allDs[myIdx-1].data[i.dataIndex]:upperVal;
+                const lo=Math.min(upperVal,lowerVal??upperVal);
+                const hi=Math.max(upperVal,lowerVal??upperVal);
+                if(Math.abs(hi-lo)<1) return null; // band is zero width, skip
+                return`  ↕ vol-corr range: ${lo>=0?'+':''}$${Math.round(lo).toLocaleString()} → ${hi>=0?'+':''}$${Math.round(hi).toLocaleString()}`;
+              }
               return`${i.dataset.label}: ${i.raw>=0?'+':''}$${Math.round(i.raw).toLocaleString()}`;
             },
           }
-        }
+        },
+        zoom:{
+          pan:{
+            enabled:true,mode:'xy',
+            onPanComplete:syncChartRange,
+          },
+          zoom:{
+            wheel:{enabled:true,speed:0.08},
+            pinch:{enabled:true},
+            mode:'xy',
+            onZoomComplete:syncChartRange,
+          },
+        },
       },
       scales:{
         x:{
@@ -2684,14 +2737,14 @@ function renderChart(){
           title:{display:true,text:'Options P&L (USD)',color:'#8b949e',font:{size:10},padding:{bottom:4}},
           ticks:{color:'#8b949e',font:{size:9},
             callback:v=>{const a=Math.abs(v);return(v>=0?'+':'-')+'$'+(a>=1000?(a/1000).toFixed(0)+'k':a.toFixed(0));}},
-          grid:{
-            color:ctx=>ctx.tick.value===0?'rgba(200,200,200,0.0)':'#21262d'
-          },
+          grid:{color:ctx=>ctx.tick.value===0?'rgba(200,200,200,0.0)':'#21262d'},
           border:{dash:[2,2]}
         }
       }
     }
   });
+  // Double-click resets zoom
+  document.getElementById('pnlChart').ondblclick=()=>resetChartZoom();
 }
 
 // ═══════════════════════════════════════════════════════
