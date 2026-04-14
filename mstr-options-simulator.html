@@ -2430,76 +2430,147 @@ function syncChartRange(){
 }
 
 function resetChartZoom(){
-  if(chart?.resetZoom) chart.resetZoom();
+  if(!chart) return;
+  // Clear manual min/max so Chart.js auto-scales again
+  chart.scales.x.options.min=undefined;
+  chart.scales.x.options.max=undefined;
+  chart.scales.y.options.min=undefined;
+  chart.scales.y.options.max=undefined;
+  chart.update();
   document.getElementById('rMin').value=50;
   document.getElementById('rMax').value=500;
   document.getElementById('chartRangeHint').textContent='$50–$500';
   scheduleHeatmap();
-  renderChart();
 }
 
-// ── Axis-drag-to-scale ─────────────────────────────────
-// Dragging on the Y-axis area scales Y only; dragging on
-// the X-axis area scales X only; body drags remain pans.
-// chartArea coordinates are CSS (logical) pixels — never
-// multiply by devicePixelRatio here.
-let _axisDrag=null;
-let _axisDragSetup=false; // guard: only add window listeners once
-function setupAxisDrag(){
+// ── Unified chart interaction ───────────────────────────
+// The chartjs-plugin-zoom is disabled in chart options.
+// We own all mouse events directly, with no conflicts:
+//   Chart body drag  → pan both axes simultaneously
+//   Y-axis area drag → scale Y only (vertical drag)
+//   X-axis area drag → scale X only (horizontal drag)
+//   Scroll wheel     → zoom both axes at cursor
+//   Double-click     → reset to auto-scale
+//
+// chartArea coords and getValueForPixel() both use CSS (logical) px.
+// Mouse offsets from getBoundingClientRect() are also CSS px — no DPR.
+let _drag=null;
+let _interactionSetup=false;
+
+function setupChartInteraction(){
   const canvas=document.getElementById('pnlChart');
   if(!canvas) return;
 
-  // Canvas-level mousedown: swap in a fresh listener each render.
-  // Store ref so we can remove the old one before adding the new one.
-  if(canvas._axisDragDown) canvas.removeEventListener('mousedown',canvas._axisDragDown,{capture:true});
-  canvas._axisDragDown=e=>{
+  // ── cursor feedback ──
+  if(canvas._ciMove) canvas.removeEventListener('mousemove',canvas._ciMove);
+  canvas._ciMove=e=>{
+    if(_drag||!chart) return;
+    const rect=canvas.getBoundingClientRect();
+    const x=e.clientX-rect.left, y=e.clientY-rect.top;
+    const ca=chart.chartArea;
+    if(x<ca.left && y>=ca.top && y<=ca.bottom)          canvas.style.cursor='ns-resize';
+    else if(y>ca.bottom && x>=ca.left && x<=ca.right)   canvas.style.cursor='ew-resize';
+    else if(x>=ca.left && x<=ca.right && y>=ca.top && y<=ca.bottom) canvas.style.cursor='grab';
+    else                                                  canvas.style.cursor='default';
+  };
+  canvas.addEventListener('mousemove',canvas._ciMove);
+
+  // ── mousedown: classify hit region ──
+  if(canvas._ciDown) canvas.removeEventListener('mousedown',canvas._ciDown);
+  canvas._ciDown=e=>{
     if(!chart||e.button!==0) return;
     const rect=canvas.getBoundingClientRect();
-    // Use CSS (logical) pixel offsets — chartArea values are in CSS px.
-    const x=e.clientX-rect.left;
-    const y=e.clientY-rect.top;
+    const x=e.clientX-rect.left, y=e.clientY-rect.top;
     const ca=chart.chartArea;
-    let axis=null;
-    if(x<ca.left && y>=ca.top && y<=ca.bottom) axis='y';
-    else if(y>ca.bottom && x>=ca.left && x<=ca.right) axis='x';
-    if(!axis) return;
-    // Stop the zoom plugin's pan from also firing for this mousedown.
+    const sx=chart.scales.x, sy=chart.scales.y;
+    let mode=null;
+    if(x>=ca.left && x<=ca.right && y>=ca.top && y<=ca.bottom)  mode='pan';
+    else if(x<ca.left && y>=ca.top && y<=ca.bottom)              mode='scaleY';
+    else if(y>ca.bottom && x>=ca.left && x<=ca.right)            mode='scaleX';
+    if(!mode) return;
     e.preventDefault();
-    e.stopPropagation();
-    // Anchor = data value under the cursor; stays fixed while scaling.
-    const sc=chart.scales[axis];
-    const anchor=sc.getValueForPixel(axis==='y'?y:x);
-    _axisDrag={axis,startX:x,startY:y,anchor,origMin:sc.min,origMax:sc.max};
+    canvas.style.cursor=mode==='pan'?'grabbing':canvas.style.cursor;
+    _drag={
+      mode, startX:x, startY:y,
+      xMin:sx.min, xMax:sx.max,
+      yMin:sy.min, yMax:sy.max,
+      // anchor: data value (label index for x, data value for y) under cursor
+      xAnchor:sx.getValueForPixel(x),
+      yAnchor:sy.getValueForPixel(y),
+    };
   };
-  canvas.addEventListener('mousedown',canvas._axisDragDown,{capture:true});
+  canvas.addEventListener('mousedown',canvas._ciDown);
 
-  // Window-level move/up: add only once across all renderChart() calls.
-  if(!_axisDragSetup){
-    _axisDragSetup=true;
+  // ── scroll: zoom both axes around cursor ──
+  if(canvas._ciWheel) canvas.removeEventListener('wheel',canvas._ciWheel);
+  canvas._ciWheel=e=>{
+    if(!chart) return;
+    e.preventDefault();
+    const rect=canvas.getBoundingClientRect();
+    const x=e.clientX-rect.left, y=e.clientY-rect.top;
+    const sx=chart.scales.x, sy=chart.scales.y;
+    const f=e.deltaY>0?1.1:0.9; // scroll down = zoom out
+    const xa=sx.getValueForPixel(x), ya=sy.getValueForPixel(y);
+    sx.options.min=xa-(xa-sx.min)*f;
+    sx.options.max=xa+(sx.max-xa)*f;
+    sy.options.min=ya-(ya-sy.min)*f;
+    sy.options.max=ya+(sy.max-ya)*f;
+    chart.update('none');
+    syncChartRange();
+  };
+  canvas.addEventListener('wheel',canvas._ciWheel,{passive:false});
+
+  // ── double-click: reset ──
+  if(canvas._ciDbl) canvas.removeEventListener('dblclick',canvas._ciDbl);
+  canvas._ciDbl=()=>resetChartZoom();
+  canvas.addEventListener('dblclick',canvas._ciDbl);
+
+  // ── window-level move + up (registered once only) ──
+  if(!_interactionSetup){
+    _interactionSetup=true;
 
     window.addEventListener('mousemove',e=>{
-      if(!_axisDrag||!chart) return;
+      if(!_drag||!chart) return;
       const cv=document.getElementById('pnlChart');
       const rect=cv.getBoundingClientRect();
-      const x=e.clientX-rect.left; // CSS px
-      const y=e.clientY-rect.top;
-      const {axis,startX,startY,anchor,origMin,origMax}=_axisDrag;
-      // dy<0 = drag up = expand; dy>0 = drag down = compress
-      // dx>0 = drag right = expand; dx<0 = drag left = compress
-      const delta=axis==='y'?startY-y:x-startX;
-      const factor=Math.exp(-delta*0.006);
-      const newMin=anchor-(anchor-origMin)*factor;
-      const newMax=anchor+(origMax-anchor)*factor;
-      if(newMax<=newMin) return; // guard against inverted range
-      chart.scales[axis].options.min=newMin;
-      chart.scales[axis].options.max=newMax;
+      const x=e.clientX-rect.left, y=e.clientY-rect.top;
+      const ca=chart.chartArea;
+      const sx=chart.scales.x, sy=chart.scales.y;
+      const {mode,startX,startY,xMin,xMax,yMin,yMax,xAnchor,yAnchor}=_drag;
+      const xSpan=ca.right-ca.left, ySpan=ca.bottom-ca.top;
+
+      if(mode==='pan'){
+        // Shift both ranges proportionally to pixel delta
+        // drag right → show lower x (xMin decreases); drag down → show lower y (yMin decreases)
+        const xDelta=-(x-startX)/xSpan*(xMax-xMin);
+        const yDelta= (y-startY)/ySpan*(yMax-yMin);
+        sx.options.min=xMin+xDelta;
+        sx.options.max=xMax+xDelta;
+        sy.options.min=yMin-yDelta;
+        sy.options.max=yMax-yDelta;
+        syncChartRange();
+      } else if(mode==='scaleX'){
+        // Horizontal drag on x-axis area: right = expand, left = compress
+        const f=Math.exp((x-startX)*0.005);
+        if(f<=0) return;
+        sx.options.min=xAnchor-(xAnchor-xMin)*f;
+        sx.options.max=xAnchor+(xMax-xAnchor)*f;
+        syncChartRange();
+      } else if(mode==='scaleY'){
+        // Vertical drag on y-axis area: up = expand, down = compress
+        const f=Math.exp(-(y-startY)*0.005);
+        if(f<=0) return;
+        sy.options.min=yAnchor-(yAnchor-yMin)*f;
+        sy.options.max=yAnchor+(yMax-yAnchor)*f;
+      }
       chart.update('none');
-      if(axis==='x') syncChartRange();
     });
 
     window.addEventListener('mouseup',()=>{
-      if(!_axisDrag) return;
-      _axisDrag=null;
+      if(!_drag) return;
+      const cv=document.getElementById('pnlChart');
+      if(cv) cv.style.cursor='grab';
+      _drag=null;
     });
   }
 }
@@ -2780,16 +2851,8 @@ function renderChart(){
           }
         },
         zoom:{
-          pan:{
-            enabled:true,mode:'xy',
-            onPanComplete:syncChartRange,
-          },
-          zoom:{
-            wheel:{enabled:true,speed:0.08},
-            pinch:{enabled:true},
-            mode:'xy',
-            onZoomComplete:syncChartRange,
-          },
+          pan:{enabled:false},
+          zoom:{wheel:{enabled:false},pinch:{enabled:false}},
         },
       },
       scales:{
@@ -2809,10 +2872,7 @@ function renderChart(){
       }
     }
   });
-  // Double-click resets zoom
-  document.getElementById('pnlChart').ondblclick=()=>resetChartZoom();
-  // Axis-drag-to-scale: drag on Y-axis area scales Y; drag on X-axis area scales X
-  setupAxisDrag();
+  setupChartInteraction();
 }
 
 // ═══════════════════════════════════════════════════════
