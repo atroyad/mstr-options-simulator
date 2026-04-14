@@ -380,7 +380,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <div class="row" style="gap:4px;margin-bottom:3px">
           <span style="color:var(--mut);min-width:12px;font-size:9px">ρ</span>
           <input type="range" id="spotVolRhoIn" min="0" max="1.5" step="0.05" value="0.75"
-            style="flex:1" oninput="state.spotVolRho=+this.value;document.getElementById('spotVolRhoVal').textContent=(+this.value).toFixed(2);renderChart()">
+            style="flex:1" oninput="state.spotVolRho=+this.value;document.getElementById('spotVolRhoVal').textContent=(+this.value).toFixed(2);renderChart();scheduleHeatmap()">
           <span id="spotVolRhoVal" style="font-family:monospace;color:var(--ylw);min-width:34px;text-align:right">0.75</span>
         </div>
         <div style="font-size:8px;color:var(--mut);line-height:1.4;margin-bottom:5px">
@@ -2449,18 +2449,21 @@ function onRangeSlider(which,val){
   scheduleHeatmap();
 }
 
-// Keep heatmap x-axis in sync with chart pan/zoom (drag/scroll interactions)
+// Keep sliders, hidden inputs, and heatmap in sync after pan/zoom
 function syncChartRange(){
   if(!chart||!chart.scales?.x) return;
   const sc=chart.scales.x;
   const labels=chart.data.labels;
   if(!labels||!labels.length) return;
-  // x-scale min/max are label indices — convert to spot $ values
   const lo=Math.max(1,Math.round(labels[Math.max(0,Math.floor(sc.min))]||+document.getElementById('rMin').value));
   const hi=Math.round(labels[Math.min(labels.length-1,Math.ceil(sc.max))]||+document.getElementById('rMax').value);
-  // Don't update sliders on pan/zoom (sliders control data range, not viewport)
+  // Update sliders visually so they always reflect current visible range
   document.getElementById('rMin').value=lo;
   document.getElementById('rMax').value=hi;
+  document.getElementById('rMinSlider').value=lo;
+  document.getElementById('rMaxSlider').value=hi;
+  document.getElementById('rMinLabel').textContent='$'+lo;
+  document.getElementById('rMaxLabel').textContent='$'+hi;
   scheduleHeatmap();
 }
 
@@ -2941,7 +2944,7 @@ function renderHeatmap(){
   const lo=+document.getElementById('rMin').value;
   const hi=+document.getElementById('rMax').value;
   const maxDays=Math.max(30,...state.legs.map(l=>getT(l.exp)*365));
-  const hasVolCorr=!state.hmVolCorr&&(state.spotVolRho||0)>0.01;
+  const hasVolCorr=state.hmVolCorr&&(state.spotVolRho||0)>0.01;
 
   // ── Pre-hoist per-leg constants (avoids recomputing inside the hot loop) ──
   const legK=state.legs.map(l=>({
