@@ -677,14 +677,23 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <div id="customDayPills" style="display:flex;gap:3px;flex-wrap:wrap;width:100%;min-height:0"></div>
       </div>
       <div class="bd">
-        <!-- Hidden inputs kept for heatmap x-axis sync -->
+        <!-- Hidden inputs for heatmap x-axis sync -->
         <input type="hidden" id="rMin" value="50">
         <input type="hidden" id="rMax" value="500">
-        <div class="sc-row" id="spotRangeRow" style="font-size:9px;color:var(--mut);padding:1px 0 2px;gap:6px">
-          <span>📐 Axis-drag to scale · Chart-drag to pan · Scroll to zoom · Dbl-click to reset</span>
-          <span id="chartRangeHint" style="margin-left:auto;font-family:monospace;color:var(--mut)">$50–$500</span>
+        <div class="sc-row" id="spotRangeRow" style="font-size:9px;color:var(--mut);padding:1px 0 2px;gap:6px;align-items:center">
+          <span style="white-space:nowrap">X range:</span>
+          <span style="white-space:nowrap;font-family:monospace;min-width:28px;text-align:right" id="rMinLabel">$50</span>
+          <input type="range" id="rMinSlider" min="1" max="499" value="50" step="1"
+            style="flex:1;min-width:40px;accent-color:var(--blu);height:3px"
+            oninput="onRangeSlider('min',this.value)">
+          <input type="range" id="rMaxSlider" min="2" max="2000" value="500" step="1"
+            style="flex:1;min-width:40px;accent-color:var(--blu);height:3px"
+            oninput="onRangeSlider('max',this.value)">
+          <span style="white-space:nowrap;font-family:monospace;min-width:36px" id="rMaxLabel">$500</span>
+          <span style="color:var(--mut);margin-left:2px">·</span>
+          <span style="white-space:nowrap;color:var(--mut)">Axis-drag · Chart-drag · Scroll · Dbl-click reset</span>
           <button onclick="resetChartZoom()" style="font-size:8px;padding:1px 5px;border:1px solid var(--bdr);
-            border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer">Reset</button>
+            border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer;white-space:nowrap">Reset</button>
         </div>
         <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
       </div>
@@ -2414,32 +2423,56 @@ function chartSpots(){
   return a;
 }
 
-// Keep heatmap x-axis in sync with chart pan/zoom range
+function updateRangeSliderUI(lo,hi){
+  const loC=Math.max(1,Math.round(lo)), hiC=Math.max(loC+1,Math.round(hi));
+  document.getElementById('rMin').value=loC;
+  document.getElementById('rMax').value=hiC;
+  document.getElementById('rMinSlider').value=loC;
+  document.getElementById('rMaxSlider').value=hiC;
+  document.getElementById('rMinLabel').textContent='$'+loC;
+  document.getElementById('rMaxLabel').textContent='$'+hiC;
+}
+
+function onRangeSlider(which,val){
+  val=+val;
+  let lo=+document.getElementById('rMin').value;
+  let hi=+document.getElementById('rMax').value;
+  if(which==='min') lo=Math.min(val,hi-5);
+  else               hi=Math.max(val,lo+5);
+  updateRangeSliderUI(lo,hi);
+  // Sliders change the data range — clear any viewport pan/zoom and rebuild
+  if(chart){
+    chart.scales.x.options.min=undefined;
+    chart.scales.x.options.max=undefined;
+  }
+  renderChart();
+  scheduleHeatmap();
+}
+
+// Keep heatmap x-axis in sync with chart pan/zoom (drag/scroll interactions)
 function syncChartRange(){
   if(!chart||!chart.scales?.x) return;
   const sc=chart.scales.x;
   const labels=chart.data.labels;
   if(!labels||!labels.length) return;
-  // x-scale min/max are label indices after zoom — convert to spot values
+  // x-scale min/max are label indices — convert to spot $ values
   const lo=Math.max(1,Math.round(labels[Math.max(0,Math.floor(sc.min))]||+document.getElementById('rMin').value));
   const hi=Math.round(labels[Math.min(labels.length-1,Math.ceil(sc.max))]||+document.getElementById('rMax').value);
+  // Don't update sliders on pan/zoom (sliders control data range, not viewport)
   document.getElementById('rMin').value=lo;
   document.getElementById('rMax').value=hi;
-  document.getElementById('chartRangeHint').textContent=`$${lo}–$${hi}`;
   scheduleHeatmap();
 }
 
 function resetChartZoom(){
   if(!chart) return;
-  // Clear manual min/max so Chart.js auto-scales again
+  // Clear viewport overrides so Chart.js auto-scales
   chart.scales.x.options.min=undefined;
   chart.scales.x.options.max=undefined;
   chart.scales.y.options.min=undefined;
   chart.scales.y.options.max=undefined;
   chart.update();
-  document.getElementById('rMin').value=50;
-  document.getElementById('rMax').value=500;
-  document.getElementById('chartRangeHint').textContent='$50–$500';
+  updateRangeSliderUI(50,500);
   scheduleHeatmap();
 }
 
