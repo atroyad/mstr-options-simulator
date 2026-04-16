@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>MSTR Options Income Simulator</title>
+<title>Options Strategy Simulator</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
@@ -217,7 +217,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
 
 <header>
   <div>
-    <h1>MSTR Options Income Simulator</h1>
+    <h1>Options Strategy Simulator</h1>
     <p>Options-only P&amp;L · Drag panel edges to resize</p>
   </div>
   <div style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap">
@@ -283,7 +283,14 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         </div>
       </div>
     </div>
-    <button class="btn" id="liveBtn" style="display:none;font-size:10px" onclick="fetchLiveData()">⟳ Fetch MSTR</button>
+    <div id="tickerRow" style="display:none;align-items:center;gap:4px">
+      <input id="tickerInput" type="text" value="MSTR" placeholder="Ticker"
+        style="font-size:11px;padding:2px 6px;width:80px;background:var(--sur2);
+          border:1px solid var(--bdr);color:var(--txt);border-radius:3px;text-transform:uppercase;font-weight:700"
+        oninput="setTicker(this.value)"
+        title="Enter any US stock ticker to fetch live options data">
+    </div>
+    <button class="btn" id="liveBtn" style="display:none;font-size:10px" onclick="fetchLiveData()">⟳ Fetch</button>
     <button class="btn" id="exportBtn" style="display:none;font-size:10px;background:var(--sur2);border:1px solid var(--bdr)" onclick="exportOptionsData()">⬇ Export for AI</button>
     <span id="liveStatus" style="font-size:9px;color:var(--mut);display:none"></span>
   </div>
@@ -307,7 +314,15 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
     <div class="card">
       <div class="hd"><h3>Market Parameters</h3></div>
       <div class="bd">
-        <label class="lbl">MSTR Spot Price (USD)</label>
+        <label class="lbl">Ticker Symbol</label>
+        <div class="row" style="gap:5px;margin-bottom:6px">
+          <input id="sidebarTicker" type="text" value="MSTR" placeholder="e.g. AAPL"
+            style="text-transform:uppercase;font-weight:700;letter-spacing:1px"
+            oninput="setTicker(this.value)"
+            title="Enter any US stock ticker (e.g. AAPL, TSLA, NVDA)">
+          <span id="tickerCurrencyLabel" style="font-size:9px;color:var(--mut);white-space:nowrap">US stock</span>
+        </div>
+        <label class="lbl" id="spotLabel">Spot Price (USD)</label>
         <div class="row">
           <input type="range" id="sSpot" min="10" max="600" step="1" value="200" oninput="syncSpot(this.value)">
           <span class="pval" id="dSpot">$200</span>
@@ -385,7 +400,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <span id="spotVolRhoVal" style="font-family:monospace;color:var(--ylw);min-width:34px;text-align:right">0.75</span>
         </div>
         <div style="font-size:8px;color:var(--mut);line-height:1.4;margin-bottom:5px">
-          0 = no correlation · 0.5 = mild · 0.75 = typical MSTR · 1.5 = extreme.<br>
+          0 = no correlation · 0.5 = mild · 0.75 = typical volatile stock · 1.5 = extreme.<br>
           Band uses IV(S') = ATM-IV × (S/S')^ρ. Set ρ=0 to hide band.
         </div>
 
@@ -450,7 +465,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
 
     <div style="background:rgba(227,179,65,.06);border:1px solid rgba(227,179,65,.2);
       border-radius:5px;padding:6px 8px;font-size:9px;color:var(--mut);line-height:1.5">
-      <strong style="color:var(--ylw)">Model note:</strong> Black-Scholes (European approx). MSTR options are American-style. IV 80–150%+ is typical for MSTR.
+      <strong style="color:var(--ylw)">Model note:</strong> Black-Scholes (European approx). US equity options are American-style. High-IV stocks (>60%) may show model deviations near expiry.
     </div>
 
   </div><!-- /sbSetup -->
@@ -468,7 +483,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <div class="gi"><div class="gn">Vega/1%IV</div><div class="gv neu" id="gVega">—</div></div>
         </div>
         <div style="font-size:9px;color:var(--mut);margin-top:6px;line-height:1.6">
-          <strong>Δ</strong> price sensitivity per $1 MSTR move ·
+          <strong>Δ</strong> price sensitivity per $1 spot move ·
           <strong>Γ</strong> rate of delta change ·
           <strong>Θ</strong> daily time decay (positive = earning) ·
           <strong>V</strong> gain per 1% IV rise
@@ -543,7 +558,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           </div>
           <div class="pair" style="margin-bottom:4px">
             <div>
-              <label class="lbl" style="margin-top:0">MSTR at roll $</label>
+              <label class="lbl" style="margin-top:0">Spot at roll $</label>
               <input type="number" id="rsS1" value="150" step="5" oninput="rsState.S1=+this.value;renderRollSim()">
             </div>
             <div>
@@ -638,7 +653,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
             style="padding:2px 8px;font-size:9px;border:none;cursor:pointer;
               background:var(--sur2);color:var(--mut)">Vol Smile</button>
         </div>
-        <h3 id="chartTitle" style="flex-shrink:0">Options P&amp;L vs MSTR Spot Price</h3>
+        <h3 id="chartTitle" style="flex-shrink:0">Options P&amp;L vs Spot Price</h3>
         <!-- Smile chart info bar — shown only in smile view -->
         <div id="smileChartInfo" style="display:none;flex:1;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-size:9px;color:var(--mut)">Model params:</span>
@@ -952,6 +967,7 @@ function bsAll(S,K,T,r,sig,type){
 // STATE
 // ═══════════════════════════════════════════════════════
 const state={
+  ticker:'MSTR',
   spot:200, iv:0.80, rate:0.045,
   simDate:new Date('2026-04-09T12:00:00'),
   legs:[], shares:700, cash:16000, leverage:1.0, nid:1,
@@ -1647,6 +1663,21 @@ function renderCustomDayPills(){
 // ═══════════════════════════════════════════════════════
 // MODE: SIMULATION vs LIVE
 // ═══════════════════════════════════════════════════════
+function setTicker(raw){
+  const t=(raw||'').toUpperCase().replace(/[^A-Z0-9.]/g,'').slice(0,8);
+  state.ticker=t||'MSTR';
+  // sync both inputs
+  const hi=document.getElementById('tickerInput');
+  const si=document.getElementById('sidebarTicker');
+  if(hi&&hi.value.toUpperCase()!==t) hi.value=t;
+  if(si&&si.value.toUpperCase()!==t) si.value=t;
+  // invalidate Saxo contract cache so next fetch re-discovers for new ticker
+  state.saxoContractCache=null;
+  state.liveOptions=[];
+  // update chart labels
+  renderAll();
+}
+
 function setMode(m){
   state.mode=m;
   const isLive=m==='live';
@@ -1655,6 +1686,7 @@ function setMode(m){
   document.getElementById('modeBadge').textContent=isLive?'Live Data':'Simulation';
   document.getElementById('modeBadge').style.background=isLive?'var(--grn)':'var(--blu)';
   document.getElementById('liveSrcRow').style.display=isLive?'flex':'none';
+  document.getElementById('tickerRow').style.display=isLive?'flex':'none';
   document.getElementById('liveBtn').style.display=isLive?'':'none';
   document.getElementById('exportBtn').style.display=isLive?'':'none';
   document.getElementById('liveStatus').style.display=isLive?'':'none';
@@ -1928,8 +1960,8 @@ async function fetchLiveData(){
     // Route through proxy when on GitHub Pages (CORS), direct when on localhost
     const proxyBase=state.saxoProxyUrl?state.saxoProxyUrl.replace(/\/$/,''):'';
     const yahooSpotUrl=proxyBase
-      ? `${proxyBase}/yahoo?ticker=MSTR`
-      : 'https://query1.finance.yahoo.com/v8/finance/chart/MSTR?interval=1m&range=1d';
+      ? `${proxyBase}/yahoo?ticker=${state.ticker}`
+      : `https://query1.finance.yahoo.com/v8/finance/chart/${state.ticker}?interval=1m&range=1d`;
     const r=await fetch(yahooSpotUrl,{cache:'no-cache'});
     const d=await r.json();
     const spot=d.chart.result[0].meta.regularMarketPrice;
@@ -1937,8 +1969,8 @@ async function fetchLiveData(){
 
     // ── Options chain ──
     const yahooOptsUrl=proxyBase
-      ? `${proxyBase}/yahoo?ticker=MSTR&type=options`
-      : 'https://query1.finance.yahoo.com/v7/finance/options/MSTR';
+      ? `${proxyBase}/yahoo?ticker=${state.ticker}&type=options`
+      : `https://query1.finance.yahoo.com/v7/finance/options/${state.ticker}`;
     const r2=await fetch(yahooOptsUrl,{cache:'no-cache'});
     const d2=await r2.json();
     const chain=d2.optionChain.result[0];
@@ -2013,7 +2045,7 @@ function exportOptionsData(){
     };
   }
   const payload={
-    ticker:'MSTR',
+    ticker:state.ticker||'MSTR',
     asOf:new Date().toISOString().slice(0,16).replace('T',' ')+' UTC',
     source:state.liveSource,
     spot:+state.spot.toFixed(2),
@@ -2030,12 +2062,12 @@ function exportOptionsData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   a.href=url;
-  a.download=`MSTR_options_${new Date().toISOString().slice(0,10)}.json`;
+  a.download=`${state.ticker||'options'}_${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 
   // ── Also copy to clipboard with a short summary header ──
-  const header=`MSTR options snapshot — spot $${payload.spot}, ATM IV ${payload.atmIV_pct}%, ${payload.expiries.length} expiries, as of ${payload.asOf}\n\n`;
+  const header=`${payload.ticker} options snapshot — spot $${payload.spot}, ATM IV ${payload.atmIV_pct}%, ${payload.expiries.length} expiries, as of ${payload.asOf}\n\n`;
   navigator.clipboard?.writeText(header+json).catch(()=>{});
 }
 
@@ -2075,7 +2107,7 @@ async function fetchSaxoData(btn,status){
       status.textContent='Paste your SIM token first (from developer.saxo OpenAPI Explorer)';
     }
     status.style.color='var(--ylw)';
-    btn.textContent='⟳ Fetch MSTR';btn.disabled=false;
+    btn.textContent='⟳ Fetch';btn.disabled=false;
     return;
   }
 
@@ -2098,40 +2130,39 @@ async function fetchSaxoData(btn,status){
     return fetch(BASE+path,{headers:H});
   };
 
+  const ticker=state.ticker||'MSTR';
+
   try{
-    // ── Step 1: find MSTR instrument Uic ──
-    const r1=await saxoFetch('/ref/v1/instruments?Keywords=MSTR&AssetTypes=Stock');
+    // ── Step 1: find stock instrument Uic ──
+    const r1=await saxoFetch(`/ref/v1/instruments?Keywords=${encodeURIComponent(ticker)}&AssetTypes=Stock`);
     if(r1.status===401){
       status.textContent=`Token rejected — use 🔐 Login to re-authenticate`;
-      status.style.color='var(--red)';btn.textContent='⟳ Fetch MSTR';btn.disabled=false;
+      status.style.color='var(--red)';btn.textContent='⟳ Fetch';btn.disabled=false;
       state.saxoToken='';return;
     }
     const d1=await r1.json();
-    console.log('Saxo MSTR search results:',d1.Data);
-    const mstr=d1.Data?.find(i=>i.Symbol==='MSTR:xnas'||i.Symbol?.startsWith('MSTR')&&!i.Symbol?.startsWith('MSTX'));
-    if(!mstr){
-      status.textContent=`MSTR not found — got: ${(d1.Data||[]).map(i=>i.Symbol).join(', ')||'nothing'}`;
-      status.style.color='var(--ylw)';btn.textContent='⟳ Fetch MSTR';btn.disabled=false;return;
+    console.log(`Saxo ${ticker} search results:`,d1.Data);
+    const stock=d1.Data?.find(i=>
+      i.Symbol===`${ticker}:xnas`||i.Symbol===`${ticker}:xnys`||i.Symbol===`${ticker}:xase`||
+      (i.Symbol?.startsWith(ticker+':')&&!i.Symbol?.startsWith(ticker+'X')))||d1.Data?.[0];
+    if(!stock){
+      status.textContent=`${ticker} not found on Saxo — got: ${(d1.Data||[]).map(i=>i.Symbol).join(', ')||'nothing'}`;
+      status.style.color='var(--ylw)';btn.textContent='⟳ Fetch';btn.disabled=false;return;
     }
-    const uic=mstr.Identifier;
-    console.log('Saxo MSTR Uic:',uic,'Symbol:',mstr.Symbol,'Desc:',mstr.Description);
+    const uic=stock.Identifier;
+    console.log(`Saxo ${ticker} Uic:`,uic,'Symbol:',stock.Symbol,'Desc:',stock.Description);
 
     // ── Step 2: spot price via Yahoo proxy ──
     let spot=state.spot;
     if(proxyBase){
       try{
-        const yr=await fetch(`${proxyBase}/yahoo?ticker=MSTR`,{cache:'no-cache'});
+        const yr=await fetch(`${proxyBase}/yahoo?ticker=${ticker}`,{cache:'no-cache'});
         const yd=await yr.json();
         const yspot=yd.chart?.result?.[0]?.meta?.regularMarketPrice;
         if(yspot&&yspot>0){syncSpot(Math.round(yspot*100)/100);spot=state.spot;}
         console.log('Yahoo spot via proxy:',yspot);
       }catch(e){console.warn('Yahoo proxy spot failed:',e);}
     }
-
-    // ── Step 3: MSTR options — fetch individual contracts via root details + expiry dates ──
-    // Root: MSTR:xcbf, Identifier=2517. instruments endpoint only returns roots, not contracts.
-    // Correct approach: get expiry dates from root details, then query per expiry.
-    const MSTR_ROOT_ID=2517;
 
     // saxoJson: fetch + safe JSON parse; returns null on error/404
     const saxoJson=async path=>{
@@ -2143,34 +2174,44 @@ async function fetchSaxoData(btn,status){
       }catch(e){return null;}
     };
 
-    // ── Step 3: contract discovery (cached 5 min to speed up auto-refresh) ──
+    // ── Step 3: find option root for this ticker, then fetch contracts ──
     const CACHE_TTL=5*60*1000;
     let atmContracts;
     if(state.saxoContractCache&&(Date.now()-state.saxoContractCacheTime)<CACHE_TTL){
       atmContracts=state.saxoContractCache;
       console.log(`Using cached contracts (${atmContracts.length}), age ${((Date.now()-state.saxoContractCacheTime)/1000).toFixed(0)}s`);
     } else {
+      // Find option root ID by searching for StockOption instruments with this ticker keyword
+      let optRootId=null;
+      const dRoots=await saxoJson(`/ref/v1/instruments?Keywords=${encodeURIComponent(ticker)}&AssetTypes=StockOption`);
+      const roots=dRoots?.Data||[];
+      const root=roots.find(i=>i.Symbol?.startsWith(ticker+':')||i.UnderlyingUic===uic)||roots[0];
+      if(root) optRootId=root.Identifier;
+      console.log(`Option root for ${ticker}:`,optRootId,'from',roots.map(i=>i.Symbol));
+
       let optInstruments=[];
-      const dSpaces=await saxoJson(`/ref/v1/instruments/contractoptionspaces/${MSTR_ROOT_ID}`);
-      const spaces=dSpaces?.OptionSpace||[];
-      console.log(`Got ${spaces.length} option spaces`);
-      for(const sp of spaces){
-        const exp=(sp.Expiry||sp.ExpiryDate||'').slice(0,10);
-        if(!exp) continue;
-        for(const o of (sp.SpecificOptions||[])){
-          if(o.TradingStatus!=='Tradable') continue;
-          optInstruments.push({
-            Identifier: o.Uic, ExpiryDate: exp, StrikePrice: o.StrikePrice,
-            PutCall: o.PutCall, _type: o.PutCall==='Call'?'call':'put',
-            UnderlyingUic: o.UnderlyingUic||uic,
-          });
+      if(optRootId){
+        const dSpaces=await saxoJson(`/ref/v1/instruments/contractoptionspaces/${optRootId}`);
+        const spaces=dSpaces?.OptionSpace||[];
+        console.log(`Got ${spaces.length} option spaces`);
+        for(const sp of spaces){
+          const exp=(sp.Expiry||sp.ExpiryDate||'').slice(0,10);
+          if(!exp) continue;
+          for(const o of (sp.SpecificOptions||[])){
+            if(o.TradingStatus!=='Tradable') continue;
+            optInstruments.push({
+              Identifier: o.Uic, ExpiryDate: exp, StrikePrice: o.StrikePrice,
+              PutCall: o.PutCall, _type: o.PutCall==='Call'?'call':'put',
+              UnderlyingUic: o.UnderlyingUic||uic,
+            });
+          }
         }
+        console.log(`Total contracts extracted: ${optInstruments.length}`);
       }
-      console.log(`Total contracts extracted: ${optInstruments.length}`);
 
       if(optInstruments.length===0){
-        // Saxo OPRA subscription may not include MSTR options — fall back to Yahoo
-        const yahooOptsUrl=proxyBase?`${proxyBase}/yahoo?ticker=MSTR&type=options`:null;
+        // Fall back to Yahoo options
+        const yahooOptsUrl=proxyBase?`${proxyBase}/yahoo?ticker=${ticker}&type=options`:null;
         if(yahooOptsUrl){
           try{
             const yro=await fetch(yahooOptsUrl,{cache:'no-cache'});
@@ -2187,7 +2228,7 @@ async function fetchSaxoData(btn,status){
           }catch(e){console.warn('Yahoo options fallback failed:',e);}
         }
         if(state.liveOptions.length===0){
-          status.textContent=`Saxo: $${spot.toFixed(2)} · MSTR options unavailable (OPRA subscription needed) — spot price only`;
+          status.textContent=`Saxo: $${spot.toFixed(2)} · ${ticker} options unavailable (OPRA subscription needed) — spot price only`;
           status.style.color='var(--ylw)';btn.textContent='⟳ Refresh';btn.disabled=false;
           renderAll();return;
         }
@@ -2287,7 +2328,7 @@ function setChartView(v){
     if(fitBadge) fitBadge.style.display=state.mode==='live'?'':'none';
   }
   document.getElementById('chartTitle').textContent=
-    isPnl?'Options P&L vs MSTR Spot Price':'Implied Volatility vs Strike (Vol Smile)';
+    isPnl?`Options P&L vs ${state.ticker||'Spot'} Price`:'Implied Volatility vs Strike (Vol Smile)';
   if(chart){chart.destroy();chart=null;}
   renderChart();
 }
@@ -2907,7 +2948,7 @@ function renderChart(){
           backgroundColor:'#161b22',borderColor:'#30363d',borderWidth:1,
           titleColor:'#c9d1d9',bodyColor:'#8b949e',
           callbacks:{
-            title:i=>`MSTR Spot: $${i[0].label}`,
+            title:i=>`${state.ticker||'Spot'}: $${i[0].label}`,
             label:i=>{
               if(i.dataset.label?.startsWith('_band_lower_')) return null;
               if(i.dataset._isBand){
@@ -2937,7 +2978,7 @@ function renderChart(){
       },
       scales:{
         x:{
-          title:{display:true,text:'MSTR Spot Price (USD)',color:'#8b949e',font:{size:10},padding:{top:4}},
+          title:{display:true,text:`${state.ticker||'Spot'} Price (USD)`,color:'#8b949e',font:{size:10},padding:{top:4}},
           ticks:{color:'#8b949e',font:{size:9},maxTicksLimit:10,
             callback:function(v){return '$'+Number(this.getLabelForValue(v)).toLocaleString();}},
           grid:{color:'#21262d'}
