@@ -46,13 +46,15 @@ export default {
         // Yahoo v8 chart works without crumb; v7 options needs crumb — use v8 options fallback
         let yahooUrl, data, resp;
         if (type === 'options') {
-          // Try v8 options first (no crumb needed)
-          yahooUrl = `https://query2.finance.yahoo.com/v8/finance/options/${ticker}`;
-          resp = await fetch(yahooUrl, { headers: hdrs });
-          if (resp.status === 401 || resp.status === 404) {
-            // Fall back to v7
-            yahooUrl = `https://query1.finance.yahoo.com/v7/finance/options/${ticker}`;
-            resp = await fetch(yahooUrl, { headers: hdrs });
+          // Try v8 options on query2 first (no crumb needed)
+          const endpoints = [
+            `https://query2.finance.yahoo.com/v8/finance/options/${ticker}?formatted=false&lang=en-US&region=US`,
+            `https://query1.finance.yahoo.com/v7/finance/options/${ticker}?formatted=false&lang=en-US&region=US`,
+            `https://query1.finance.yahoo.com/v8/finance/options/${ticker}?formatted=false&lang=en-US&region=US`,
+          ];
+          for (const ep of endpoints) {
+            resp = await fetch(ep, { headers: hdrs });
+            if (resp.ok) break; // stop on first success
           }
         } else {
           yahooUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1m&range=1d`;

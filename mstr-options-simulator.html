@@ -658,17 +658,22 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
     <!-- ── GREEKS CARD ── -->
     <div class="card view-card" id="greeksCard" style="display:none">
       <div class="hd" style="height:auto;padding:4px 8px;gap:6px;flex-wrap:wrap">
-        <h3>Greeks vs Spot Price</h3>
+        <h3>Greeks vs Spot</h3>
         <span style="font-size:9px;color:var(--mut)">Expiry:</span>
         <select id="greeksExpiry" style="font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 4px" onchange="renderGreeksDashboard()">
-          <option value="all">All / Portfolio</option>
+          <option value="all">All expiries</option>
         </select>
-        <div style="display:flex;gap:2px;margin-left:4px">
+        <div style="display:flex;gap:2px">
           <button id="gfAll"  class="lev-btn on" onclick="setGreeksFilter('all')"  style="font-size:9px;padding:2px 7px">All</button>
           <button id="gfCall" class="lev-btn"    onclick="setGreeksFilter('call')" style="font-size:9px;padding:2px 7px">Calls</button>
           <button id="gfPut"  class="lev-btn"    onclick="setGreeksFilter('put')"  style="font-size:9px;padding:2px 7px">Puts</button>
         </div>
-        <span style="font-size:9px;color:var(--mut);margin-left:auto">Per-contract × 100 shares</span>
+        <span style="font-size:9px;color:var(--mut)">Range:</span>
+        <input type="range" id="greeksRange" min="10" max="100" step="5" value="50"
+          oninput="setGreeksRange(this.value)"
+          style="width:55px;accent-color:var(--acc);cursor:pointer">
+        <span id="greeksRangeVal" style="font-size:9px;color:var(--mut);min-width:30px">±50%</span>
+        <span id="greeksSrcLabel" style="font-size:8px;color:var(--mut);margin-left:auto;font-style:italic"></span>
       </div>
       <div class="bd" style="padding:6px 8px">
         <div class="greeks-grid">
@@ -1832,9 +1837,13 @@ async function saxoOAuthLogin(){
 
   const popup=window.open(authUrl,'saxo_login','width=540,height=660,left=200,top=80');
   if(!popup){
-    authStatus.textContent='Popup blocked — allow popups for this site then try again';
-    authStatus.style.color='var(--red)';
-    _pkceVerifier='';
+    // Popup blocked (common on mobile Safari) — use full-page redirect flow instead
+    authStatus.textContent='Redirecting to Saxo login…';authStatus.style.color='var(--mut)';
+    sessionStorage.setItem('saxo_pkce',JSON.stringify({
+      verifier:_pkceVerifier, clientId, redirectUri, proxyUrl,
+      env:state.saxoEnv, source:'saxo',
+    }));
+    window.location.href=authUrl;
     return;
   }
   authStatus.textContent='Waiting for Saxo login…';
@@ -1918,7 +1927,51 @@ async function saxoOAuthLogin(){
   },400);
 }
 
-function handleSaxoCallback(){} // unused in popup flow — kept for safety
+function handleSaxoCallback(){} // legacy hash flow — kept for safety
+
+// ── Handles redirect-back from Saxo (mobile / popup-blocked fallback) ──
+async function handleSaxoRedirectCallback(code,pkce){
+  // Clean up ?code=... from address bar without reload
+  history.replaceState({},'',window.location.pathname);
+  sessionStorage.removeItem('saxo_pkce');
+
+  // Switch UI to Real Data → Saxo
+  setMode('live');
+  setLiveSource('saxo');
+  updateSaxoUI();
+  renderAll(); renderRollSim();
+
+  const authStatus=saxoAuthStatus();
+  authStatus.textContent='Exchanging code via proxy…';authStatus.style.color='var(--mut)';
+
+  try{
+    const resp=await fetch(pkce.proxyUrl,{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({
+        grant_type:'authorization_code',
+        code, redirect_uri:pkce.redirectUri,
+        client_id:pkce.clientId, code_verifier:pkce.verifier,
+        saxo_env:pkce.env,
+      }),
+    });
+    const data=await resp.json();
+    if(data.access_token){
+      state.saxoToken=data.access_token;
+      const exp=data.expires_in?Math.round(data.expires_in/60)+'min':'?';
+      authStatus.textContent=`✓ Authenticated (${exp} remaining)`;
+      authStatus.style.color='var(--grn)';
+      fetchLiveData();
+    } else {
+      authStatus.textContent='Token error: '+(data.error_description||data.error||'unknown');
+      authStatus.style.color='var(--red)';
+    }
+  }catch(e){
+    authStatus.textContent='Token exchange failed';
+    authStatus.style.color='var(--red)';
+    console.error('Redirect token exchange error:',e);
+  }
+}
 
 async function fetchLiveData(){
   const btn=document.getElementById('liveBtn');
@@ -3571,6 +3624,7 @@ function togLine(btn){
 // ═══════════════════════════════════════════════════════
 let _greeksCharts={};
 let _greeksFilter='all'; // 'all' | 'call' | 'put'
+let _greeksRange=50;    // ±% of current spot shown on x-axis
 
 function setGreeksFilter(f){
   _greeksFilter=f;
@@ -3579,14 +3633,21 @@ function setGreeksFilter(f){
   document.getElementById('gfPut').classList.toggle('on',f==='put');
   renderGreeksDashboard();
 }
+function setGreeksRange(v){
+  _greeksRange=+v;
+  const lbl=document.getElementById('greeksRangeVal');
+  if(lbl) lbl.textContent=`±${v}%`;
+  renderGreeksDashboard();
+}
 
 function updateGreeksExpiries(){
   const sel=document.getElementById('greeksExpiry');
   if(!sel) return;
-  const legs=state.legs;
-  const exps=[...new Set(legs.map(l=>l.exp))].sort();
+  // Use liveOptions expiries if loaded (richer set); fall back to strategy legs
+  const src=state.liveOptions.length>0?state.liveOptions:state.legs;
+  const exps=[...new Set(src.map(o=>o.exp))].sort();
   const prev=sel.value;
-  sel.innerHTML='<option value="all">All / Portfolio</option>';
+  sel.innerHTML='<option value="all">All expiries</option>';
   exps.forEach(e=>{
     const o=document.createElement('option');
     o.value=e; o.textContent=e;
@@ -3597,32 +3658,50 @@ function updateGreeksExpiries(){
 
 function renderGreeksDashboard(){
   const spot=state.spot;
-  const spots=[];
-  const lo=Math.max(1,spot*0.5), hi=spot*1.5;
+  const pct=_greeksRange/100;
+  const lo=Math.max(1,spot*(1-pct)), hi=spot*(1+pct);
   const steps=60;
+  const spots=[];
   for(let i=0;i<=steps;i++) spots.push(lo+(hi-lo)*i/steps);
 
   const selExp=document.getElementById('greeksExpiry')?.value||'all';
-  let legs=state.legs.filter(l=>{
-    if(selExp!=='all'&&l.exp!==selExp) return false;
-    if(_greeksFilter!=='all'&&l.type!==_greeksFilter) return false;
-    return true;
-  });
+
+  // ── Data source: liveOptions (market chain) takes priority over strategy legs ──
+  // liveOptions: each row = {K, iv, type, exp, bid, ask} — treat as qty=1 long contract
+  // legs: user's strategy positions with qty, action, prem
+  const useLive=state.liveOptions.length>0;
+  let positions;
+  if(useLive){
+    positions=state.liveOptions.filter(o=>{
+      if(selExp!=='all'&&o.exp!==selExp) return false;
+      if(_greeksFilter!=='all'&&o.type!==_greeksFilter) return false;
+      return true;
+    }).map(o=>({K:o.K, type:o.type, exp:o.exp, iv:o.iv, qty:1, sign:1}));
+  } else {
+    positions=state.legs.filter(l=>{
+      if(selExp!=='all'&&l.exp!==selExp) return false;
+      if(_greeksFilter!=='all'&&l.type!==_greeksFilter) return false;
+      return true;
+    }).map(l=>({K:l.K, type:l.type, exp:l.exp, iv:null, qty:l.qty, sign:l.action==='sell'?-1:1}));
+  }
+
+  // Update source label
+  const srcLbl=document.getElementById('greeksSrcLabel');
+  if(srcLbl) srcLbl.textContent=useLive?'Market chain (1 contract each)':'Strategy legs';
 
   const greekSets={delta:[],gamma:[],theta:[],vega:[]};
   for(const S of spots){
     let d=0,g=0,th=0,v=0;
-    for(const l of legs){
-      const T=getT(l.exp);
+    for(const p of positions){
+      const T=getT(p.exp);
       if(T<=0) continue;
-      const iv=state.ivSurface==='smile'?smileIV(l.K,S,state.iv):state.iv;
-      const gr=bsAll(S,l.K,T,state.rate,iv,l.type);
-      const sign=l.action==='sell'?-1:1;
-      const n=l.qty*100*sign;
-      d+=gr.delta*n;
-      g+=gr.gamma*n;
-      th+=gr.theta*n;
-      v+=gr.vega*n;
+      // Use option's own market IV when from liveOptions; else use model IV
+      const iv=p.iv!=null
+        ? p.iv
+        : (state.ivSurface==='smile'?smileIV(p.K,S,state.iv):state.iv);
+      const gr=bsAll(S,p.K,T,state.rate,iv,p.type);
+      const n=p.qty*100*p.sign;
+      d+=gr.delta*n; g+=gr.gamma*n; th+=gr.theta*n; v+=gr.vega*n;
     }
     greekSets.delta.push(d);
     greekSets.gamma.push(g);
@@ -3631,6 +3710,8 @@ function renderGreeksDashboard(){
   }
 
   const labels=spots.map(s=>'$'+Math.round(s));
+  // Index of current spot for reference line
+  const spotIdx=Math.round(steps/2);
 
   const cfgs=[
     {id:'gDeltaChart',label:'Delta Δ',key:'delta',hex:'#58a6ff'},
@@ -3664,19 +3745,28 @@ function renderGreeksDashboard(){
         animation:false,
         plugins:{
           legend:{display:false},
+          annotation:{
+            annotations:{
+              spotLine:{
+                type:'line',
+                xMin:spotIdx,xMax:spotIdx,
+                borderColor:'rgba(255,255,255,0.25)',
+                borderWidth:1,borderDash:[3,3],
+              }
+            }
+          },
           tooltip:{
             backgroundColor:'#161b22',borderColor:'#30363d',borderWidth:1,
             titleColor:'#c9d1d9',bodyColor:'#8b949e',
             callbacks:{
               title:i=>`Spot: ${i[0].label}`,
-              label:i=>`${cfg.label}: ${i.raw.toFixed(3)}`,
+              label:i=>{const a=Math.abs(i.raw);return `${cfg.label}: ${i.raw>=0?'':'-'}${a>=1000?(a/1000).toFixed(1)+'k':a.toFixed(3)}`;}
             }
           },
         },
         scales:{
           x:{
-            ticks:{color:'#8b949e',font:{size:8},maxTicksLimit:6,
-              callback:(v,i)=>i%10===0?labels[i]:''},
+            ticks:{color:'#8b949e',font:{size:8},maxTicksLimit:7,autoSkip:true,maxRotation:0},
             grid:{color:'#21262d'},
           },
           y:{
@@ -3697,14 +3787,26 @@ function renderGreeksDashboard(){
 window.addEventListener('load',()=>{
   document.getElementById('fStrike').value=state.spot;
   initResizers();
-  _applyViewLayout(); // set up center panes before rendering
-  // Check for Saxo OAuth callback
+  _applyViewLayout();
+
+  // ── Saxo redirect-back detection (mobile / popup-blocked fallback) ──
+  const _urlParams=new URLSearchParams(window.location.search);
+  const _oauthCode=_urlParams.get('code');
+  const _pkceRaw=sessionStorage.getItem('saxo_pkce');
+  if(_oauthCode&&_pkceRaw){
+    try{ handleSaxoRedirectCallback(_oauthCode,JSON.parse(_pkceRaw)); }
+    catch(e){ sessionStorage.removeItem('saxo_pkce'); renderAll(); renderRollSim(); }
+    return;
+  }
+
+  // Legacy hash-based callback
   if(window.location.hash.includes('access_token=')){
     handleSaxoCallback();
-  } else {
-    renderAll();
-    renderRollSim();
+    return;
   }
+
+  renderAll();
+  renderRollSim();
 });
 let rzTimer;
 window.addEventListener('resize',()=>{
