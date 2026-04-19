@@ -54,7 +54,7 @@ header p{font-size:10px;color:var(--mut);}
 #pane1{flex:1;}
 #pane2{flex:1;}
 .pane-bar{height:28px;display:flex;align-items:center;padding:0 6px;gap:2px;
-  background:var(--sur2);border-bottom:1px solid var(--bdr);flex-shrink:0;overflow:hidden;}
+  background:var(--sur2);border-bottom:1px solid var(--bdr);flex-shrink:0;overflow-x:auto;overflow-y:hidden;}
 .pnav-btn{padding:2px 9px;border:none;border-bottom:2px solid transparent;
   background:transparent;color:var(--mut);font-size:10px;cursor:pointer;font-weight:500;white-space:nowrap;}
 .pnav-btn:hover{color:var(--txt);}
@@ -205,7 +205,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
   transition:color .1s;}
 .sb-tab:hover{color:var(--txt);}
 .sb-tab.on{color:var(--blu);border-bottom-color:var(--blu);font-weight:700;}
-.sb-pane{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:5px;padding:6px;}
+.sb-pane{flex:1;overflow:auto;display:flex;flex-direction:column;gap:5px;padding:6px;}
 
 /* ── BUILDER TABS ── */
 .tab-btn{padding:2px 10px;border:none;border-bottom:2px solid transparent;
@@ -618,7 +618,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <!-- Hidden inputs for heatmap x-axis sync -->
         <input type="hidden" id="rMin" value="50">
         <input type="hidden" id="rMax" value="500">
-        <div class="sc-row" id="spotRangeRow" style="font-size:9px;color:var(--mut);padding:1px 0 2px;gap:6px;align-items:center">
+        <div class="sc-row" id="spotRangeRow" style="font-size:9px;color:var(--mut);padding:1px 0 1px;gap:6px;align-items:center;flex-wrap:wrap">
           <span style="white-space:nowrap">X range:</span>
           <span style="white-space:nowrap;font-family:monospace;min-width:28px;text-align:right" id="rMinLabel">$50</span>
           <input type="range" id="rMinSlider" min="1" max="499" value="50" step="1"
@@ -632,6 +632,13 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <span style="white-space:nowrap;color:var(--mut)">Axis-drag · Chart-drag · Scroll · Dbl-click reset</span>
           <button onclick="resetChartZoom()" style="font-size:8px;padding:1px 5px;border:1px solid var(--bdr);
             border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer;white-space:nowrap">Reset</button>
+          <span style="white-space:nowrap;width:100%;display:flex;align-items:center;gap:6px;padding-top:1px">
+            <span style="white-space:nowrap">±%:</span>
+            <span style="white-space:nowrap;font-family:monospace;min-width:28px;text-align:right" id="rPctLabel">±50%</span>
+            <input type="range" id="rPctSlider" min="5" max="200" value="50" step="5"
+              style="flex:1;min-width:40px;accent-color:var(--pur);height:3px"
+              oninput="onRangePctSlider('r',+this.value)">
+          </span>
         </div>
         <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
       </div>
@@ -647,7 +654,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <!-- Hidden inputs read by renderHeatmap -->
         <input type="hidden" id="hmMin" value="100">
         <input type="hidden" id="hmMax" value="400">
-        <div class="sc-row" style="font-size:9px;color:var(--mut);padding:1px 0 3px;gap:6px;align-items:center">
+        <div class="sc-row" style="font-size:9px;color:var(--mut);padding:1px 0 1px;gap:6px;align-items:center;flex-wrap:wrap">
           <span style="white-space:nowrap">X range:</span>
           <span style="white-space:nowrap;font-family:monospace;min-width:28px;text-align:right" id="hmMinLabel">$100</span>
           <input type="range" id="hmMinSlider" min="1" max="4999" value="100" step="1"
@@ -659,6 +666,13 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <span style="white-space:nowrap;font-family:monospace;min-width:36px" id="hmMaxLabel">$400</span>
           <span style="color:var(--mut);margin-left:2px">·</span>
           <span style="white-space:nowrap;color:var(--mut)">Scroll · Drag to pan</span>
+          <span style="white-space:nowrap;width:100%;display:flex;align-items:center;gap:6px;padding-top:1px">
+            <span style="white-space:nowrap">±%:</span>
+            <span style="white-space:nowrap;font-family:monospace;min-width:28px;text-align:right" id="hmPctLabel">±50%</span>
+            <input type="range" id="hmPctSlider" min="5" max="200" value="50" step="5"
+              style="flex:1;min-width:40px;accent-color:var(--pur);height:3px"
+              oninput="onRangePctSlider('hm',+this.value)">
+          </span>
         </div>
         <canvas id="heatmapCanvas"></canvas>
         <div class="hm-leg">
@@ -714,7 +728,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <!-- Hidden inputs read by renderGreeksDashboard -->
         <input type="hidden" id="gMin" value="100">
         <input type="hidden" id="gMax" value="400">
-        <div class="sc-row" style="font-size:9px;color:var(--mut);padding:1px 0 4px;gap:6px;align-items:center">
+        <div class="sc-row" style="font-size:9px;color:var(--mut);padding:1px 0 1px;gap:6px;align-items:center;flex-wrap:wrap">
           <span style="white-space:nowrap">X range:</span>
           <span style="white-space:nowrap;font-family:monospace;min-width:28px;text-align:right" id="gMinLabel">$100</span>
           <input type="range" id="gMinSlider" min="1" max="4999" value="100" step="1"
@@ -725,6 +739,13 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
             oninput="onGreeksRangeSlider('max',this.value)">
           <span style="white-space:nowrap;font-family:monospace;min-width:36px" id="gMaxLabel">$400</span>
           <button onclick="resetGreeksRange()" style="font-size:8px;padding:1px 5px;border:1px solid var(--bdr);border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer;white-space:nowrap">Reset</button>
+          <span style="white-space:nowrap;width:100%;display:flex;align-items:center;gap:6px;padding-top:1px">
+            <span style="white-space:nowrap">±%:</span>
+            <span style="white-space:nowrap;font-family:monospace;min-width:28px;text-align:right" id="gPctLabel">±50%</span>
+            <input type="range" id="gPctSlider" min="5" max="200" value="50" step="5"
+              style="flex:1;min-width:40px;accent-color:var(--pur);height:3px"
+              oninput="onRangePctSlider('g',+this.value)">
+          </span>
         </div>
         <div class="greeks-grid">
           <div><canvas id="gDeltaChart"></canvas></div>
@@ -2460,8 +2481,7 @@ function volAdjIV(scSpot,baseIV){
 }
 
 // ── Vol smile model: log-moneyness parameterisation ──
-// smileIV(K, S, baseIV) gives the IV surface value for strike K when spot is S.
-// Parameters default to state values if not passed (live-fitting updates state).
+// Fallback when no market data. 2-param quadratic in log-moneyness.
 // Convention: skew<0 → put skew (left wing up, typical equities/MSTR)
 //             conv>0 → curvature (both wings raised, the classic "smile")
 function smileIV(K,S,baseIV,skew,conv){
@@ -2471,14 +2491,46 @@ function smileIV(K,S,baseIV,skew,conv){
   return baseIV*Math.exp(skew*x+conv*x*x);
 }
 
+// ── marketIV: interpolate IV directly from loaded market option chain ──
+// Uses sticky-strike (IV at each K stays fixed as spot moves).
+// Returns null if outside the market range or no data for that expiry.
+function marketIV(K,expiry,type){
+  const src=state.liveOptions.filter(o=>(expiry?o.exp===expiry:true)&&o.type===type&&o.iv>0.01);
+  if(src.length<2) return null;
+  const sorted=src.slice().sort((a,b)=>a.K-b.K);
+  // Exact match
+  const exact=sorted.find(o=>o.K===K);
+  if(exact) return exact.iv;
+  // Below range — extrapolate flat from nearest
+  if(K<=sorted[0].K) return sorted[0].iv;
+  // Above range — extrapolate flat from nearest
+  if(K>=sorted[sorted.length-1].K) return sorted[sorted.length-1].iv;
+  // Linear interpolation in log(IV) vs log(K) space (standard market convention)
+  for(let i=0;i<sorted.length-1;i++){
+    if(sorted[i].K<=K&&K<=sorted[i+1].K){
+      const t=(K-sorted[i].K)/(sorted[i+1].K-sorted[i].K);
+      return Math.exp((1-t)*Math.log(sorted[i].iv)+t*Math.log(sorted[i+1].iv));
+    }
+  }
+  return null;
+}
+
 // ── scenarioIV: IV to price a leg at a HYPOTHETICAL scenario spot S ──
-// Always uses the CURRENT state.iv (the "what-if" scenario IV), not the entry IV.
-// This means:
-//   • Sliding the IV slider changes cp but not refPx → vega P&L appears ✓
-//   • Switching Flat↔Smile changes the shape of the P&L curve ✓
-// The entry-price reference (refPx) is anchored via legIV/entryPx separately.
+// In 'smile' mode with market data: interpolate from market chain (sticky strike).
+// In 'smile' mode without market data: use parametric model.
+// In 'flat' mode: use ATM IV (state.iv), scaled by ratio if IV slider moved.
 function scenarioIV(l,S){
-  if(state.ivSurface==='smile') return smileIV(l.K,S,state.iv);
+  if(state.ivSurface==='smile'){
+    // Try market IV for this leg's expiry and type
+    const miv=marketIV(l.K,l.exp,l.type);
+    if(miv!==null){
+      // Scale by current state.iv / ATM market IV so the IV slider still works
+      const atmMkt=marketIV(state.spot,l.exp,'call')||marketIV(state.spot,l.exp,'put')||state.iv;
+      return miv*(state.iv/atmMkt);
+    }
+    // Fallback: parametric model
+    return smileIV(l.K,S,state.iv);
+  }
   return state.iv;
 }
 
@@ -2493,16 +2545,39 @@ function renderSmileChart(){
 
   const datasets=[];
 
-  // 1. Parameterised smile (model) — uses state.smileSkew + state.smileConv
+  // 1. Market IV interpolation curve (when live data loaded) — most accurate
   const usedForPnl=state.ivSurface==='smile';
+  const hasMarket=state.liveOptions.length>0;
+  if(hasMarket){
+    // Get nearest expiry in market data
+    const mktExps=[...new Set(state.liveOptions.map(o=>o.exp))].sort();
+    // Show separate call/put interpolation curves
+    const mktCallIVs=strikes.map(K=>{const v=marketIV(K,mktExps[0],'call');return v?v*100:null;});
+    const mktPutIVs =strikes.map(K=>{const v=marketIV(K,mktExps[0],'put'); return v?v*100:null;});
+    datasets.push({
+      label:`Market IV calls — ${mktExps[0]}${usedForPnl?' ← used for P&L':''}`,
+      data:mktCallIVs,
+      borderColor:'#3fb950',backgroundColor:'rgba(63,185,80,0.06)',
+      borderWidth:usedForPnl?2:1.5,pointRadius:0,tension:0.3,fill:false,
+    });
+    datasets.push({
+      label:`Market IV puts — ${mktExps[0]}${usedForPnl?' ← used for P&L':''}`,
+      data:mktPutIVs,
+      borderColor:'#f85149',backgroundColor:'transparent',
+      borderWidth:usedForPnl?2:1.5,pointRadius:0,tension:0.3,fill:false,
+    });
+  }
+
+  // 2. Parameterised smile (model) — reference only when market data loaded
   datasets.push({
-    label:`Vol smile model (skew=${state.smileSkew.toFixed(2)}, conv=${state.smileConv.toFixed(2)})${usedForPnl?' ← used for P&L':''}`,
+    label:`Parametric model (skew=${state.smileSkew.toFixed(2)}, conv=${state.smileConv.toFixed(2)})${!hasMarket&&usedForPnl?' ← used for P&L':''}`,
     data:strikes.map(K=>smileIV(K,S,iv)*100),
-    borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.08)',
-    borderWidth:usedForPnl?2.5:1.5,pointRadius:0,tension:0.4,fill:true,
+    borderColor:'#58a6ff',backgroundColor:'rgba(88,166,255,0.04)',
+    borderWidth:hasMarket?1:usedForPnl?2.5:1.5,borderDash:hasMarket?[3,3]:undefined,
+    pointRadius:0,tension:0.4,fill:hasMarket?false:true,
   });
 
-  // 2. Flat IV line (current global setting)
+  // 4. Flat IV line (current global setting)
   datasets.push({
     label:`Flat IV ${(iv*100).toFixed(0)}%${!usedForPnl?' ← used for P&L':''}`,
     data:strikes.map(()=>iv*100),
@@ -2510,7 +2585,7 @@ function renderSmileChart(){
     borderWidth:usedForPnl?1:2,borderDash:[5,4],pointRadius:0,tension:0,
   });
 
-  // 3. Back-solved IVs from user-entered leg prices
+  // 5. Back-solved IVs from user-entered leg prices
   const legPoints=state.legs
     .filter(l=>l.prem!==undefined&&l.prem!==null)
     .map(l=>({K:l.K,iv:legIV(l)*100,type:l.type,action:l.action}));
@@ -2526,7 +2601,7 @@ function renderSmileChart(){
     });
   }
 
-  // 4. Live market IV points from Yahoo Finance
+  // 6. Live market IV scatter points from Yahoo Finance
   const callPoints=state.liveOptions.filter(o=>o.type==='call');
   const putPoints =state.liveOptions.filter(o=>o.type==='put');
   if(callPoints.length){
@@ -2607,6 +2682,15 @@ function updateRangeSliderUI(lo,hi){
   document.getElementById('rMaxSlider').value=hiC;
   document.getElementById('rMinLabel').textContent='$'+loC;
   document.getElementById('rMaxLabel').textContent='$'+hiC;
+  // Sync ±% label (approximate, based on spot)
+  const S=state.spot;
+  if(S>0){
+    const pct=Math.round(Math.max((S-loC)/S,(hiC-S)/S)*100);
+    const pctEl=document.getElementById('rPctLabel');
+    const pctSl=document.getElementById('rPctSlider');
+    if(pctEl) pctEl.textContent='±'+pct+'%';
+    if(pctSl) pctSl.value=Math.min(200,Math.max(5,pct));
+  }
 }
 
 function onRangeSlider(which,val){
@@ -3699,6 +3783,14 @@ function updateHmSliderUI(lo,hi){
   const maxL=document.getElementById('hmMaxLabel');
   if(minL) minL.textContent='$'+_hmLo;
   if(maxL) maxL.textContent='$'+_hmHi;
+  const S=state.spot;
+  if(S>0){
+    const pct=Math.round(Math.max((S-_hmLo)/S,(_hmHi-S)/S)*100);
+    const pctEl=document.getElementById('hmPctLabel');
+    const pctSl=document.getElementById('hmPctSlider');
+    if(pctEl) pctEl.textContent='±'+pct+'%';
+    if(pctSl) pctSl.value=Math.min(200,Math.max(5,pct));
+  }
 }
 function onHmRangeSlider(which,val){
   val=+val;
@@ -3727,6 +3819,14 @@ function updateGreeksSliderUI(lo,hi){
   const maxL=document.getElementById('gMaxLabel');
   if(minL) minL.textContent='$'+_gLo;
   if(maxL) maxL.textContent='$'+_gHi;
+  const S=state.spot;
+  if(S>0){
+    const pct=Math.round(Math.max((S-_gLo)/S,(_gHi-S)/S)*100);
+    const pctEl=document.getElementById('gPctLabel');
+    const pctSl=document.getElementById('gPctSlider');
+    if(pctEl) pctEl.textContent='±'+pct+'%';
+    if(pctSl) pctSl.value=Math.min(200,Math.max(5,pct));
+  }
 }
 function onGreeksRangeSlider(which,val){
   val=+val;
@@ -3740,6 +3840,26 @@ function resetGreeksRange(){
   _gHi=Math.round(state.spot*1.5);
   updateGreeksSliderUI(_gLo,_gHi);
   renderGreeksDashboard();
+}
+// ±% moneyness slider — shared handler for all three chart groups
+function onRangePctSlider(prefix,pct){
+  const S=state.spot;
+  const lo=Math.max(1,Math.round(S*(1-pct/100)));
+  const hi=Math.round(S*(1+pct/100));
+  const lbl=document.getElementById(prefix+'PctLabel');
+  if(lbl) lbl.textContent='±'+pct+'%';
+  if(prefix==='r'){
+    updateRangeSliderUI(lo,hi);
+    if(chart){chart.scales.x.options.min=undefined;chart.scales.x.options.max=undefined;}
+    renderChart();
+    scheduleHeatmap();
+  } else if(prefix==='hm'){
+    updateHmSliderUI(lo,hi);
+    scheduleHeatmap();
+  } else if(prefix==='g'){
+    updateGreeksSliderUI(lo,hi);
+    renderGreeksDashboard();
+  }
 }
 function syncSpot(v){
   state.spot=+v;
