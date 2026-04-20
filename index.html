@@ -862,7 +862,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
             <button onclick="clearCmpComparisons()" style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Reset to current</button>
             <span id="cmpLiveStatus" style="font-size:8px;color:var(--mut)"></span>
           </div>
-          <div style="font-size:8px;color:var(--mut);margin-top:3px">Additional tickers fetched via Yahoo Finance (delayed)</div>
+          <div id="cmpLiveSourceNote" style="font-size:8px;color:var(--mut);margin-top:3px">Additional tickers fetched via Yahoo Finance (delayed)</div>
         </div>
         <!-- Charts -->
         <div id="compareCharts">
@@ -2090,6 +2090,7 @@ function setLiveSource(src){
   document.getElementById('srcSaxo').classList.toggle('on',src==='saxo');
   document.getElementById('srcIbkr').classList.toggle('on',src==='ibkr');
   updateSaxoUI();
+  updateCmpControls();
   if(src==='yahoo') fetchLiveData();
   // Saxo: user must click Login first; IBKR: not yet implemented
 }
@@ -4640,53 +4641,153 @@ function renderCmpSimList(){
   });
 }
 
-// ── Live mode: add a ticker ──
+// ── Live mode: add a ticker (dispatches to active source) ──
 async function addCmpTicker(ticker){
   ticker=(ticker||'').trim().toUpperCase();
   if(!ticker) return;
   if(_cmpTickers.find(t=>t.ticker===ticker)){
-    const inp=document.getElementById('cmpTickerInput');
-    if(inp) inp.value='';
+    document.getElementById('cmpTickerInput').value='';
     return;
   }
   const statusEl=document.getElementById('cmpLiveStatus');
   if(statusEl) statusEl.textContent=`Fetching ${ticker}…`;
-
-  const proxyBase=(state.saxoProxyUrl||'').replace(/\/$/,'');
-  if(!proxyBase){
-    if(statusEl) statusEl.textContent='Set proxy URL first';
-    return;
-  }
-
   try{
-    // Fetch spot
-    const yr=await fetch(`${proxyBase}/yahoo?ticker=${ticker}`,{cache:'no-cache'});
-    const yd=await yr.json();
-    const spot=yd?.chart?.result?.[0]?.meta?.regularMarketPrice;
-    if(!spot){if(statusEl) statusEl.textContent=`No spot for ${ticker}`;return;}
-
-    // Fetch options chain
-    const r2=await fetch(`${proxyBase}/yahoo?ticker=${ticker}&type=options`,{cache:'no-cache'});
-    const d2=await r2.json();
-    const chain=d2?.optionChain?.result?.[0];
-    if(!chain){if(statusEl) statusEl.textContent=`No options for ${ticker}`;return;}
-
-    const liveOptions=[];
-    const toDate=ts=>new Date(ts*1000).toISOString().slice(0,10);
-    for(const page of (chain.options||[])){
-      for(const o of (page.calls||[])) if(o.impliedVolatility>0) liveOptions.push({K:o.strike,iv:o.impliedVolatility,type:'call',exp:toDate(o.expiration)});
-      for(const o of (page.puts||[]))  if(o.impliedVolatility>0) liveOptions.push({K:o.strike,iv:o.impliedVolatility,type:'put', exp:toDate(o.expiration)});
-    }
-
-    _cmpTickers.push({ticker, spot:Math.round(spot*100)/100, liveOptions});
+    let result=null;
+    if(state.liveSource==='saxo') result=await _cmpFetchSaxo(ticker,statusEl);
+    else if(state.liveSource==='ibkr'){ if(statusEl) statusEl.textContent='IBKR not yet implemented — use Yahoo or Saxo'; return; }
+    else result=await _cmpFetchYahoo(ticker,statusEl);
+    if(!result) return;
+    _cmpTickers.push({ticker,...result});
     if(statusEl) statusEl.textContent='';
-    const inp=document.getElementById('cmpTickerInput');
-    if(inp) inp.value='';
+    document.getElementById('cmpTickerInput').value='';
     renderCmpTickerList();
     renderGreeksComparison();
   } catch(e){
     if(statusEl) statusEl.textContent=`Error: ${e.message}`;
   }
+}
+
+async function _cmpFetchYahoo(ticker,statusEl){
+  const proxyBase=(state.saxoProxyUrl||'').replace(/\/$/,'');
+  if(!proxyBase){ if(statusEl) statusEl.textContent='Set proxy URL first'; return null; }
+  const yr=await fetch(`${proxyBase}/yahoo?ticker=${ticker}`,{cache:'no-cache'});
+  const yd=await yr.json();
+  const spot=yd?.chart?.result?.[0]?.meta?.regularMarketPrice;
+  if(!spot){ if(statusEl) statusEl.textContent=`No spot for ${ticker}`; return null; }
+  const r2=await fetch(`${proxyBase}/yahoo?ticker=${ticker}&type=options`,{cache:'no-cache'});
+  const d2=await r2.json();
+  const chain=d2?.optionChain?.result?.[0];
+  if(!chain){ if(statusEl) statusEl.textContent=`No options for ${ticker}`; return null; }
+  const liveOptions=[];
+  const toDate=ts=>new Date(ts*1000).toISOString().slice(0,10);
+  for(const page of (chain.options||[])){
+    for(const o of (page.calls||[])) if(o.impliedVolatility>0) liveOptions.push({K:o.strike,iv:o.impliedVolatility,type:'call',exp:toDate(o.expiration)});
+    for(const o of (page.puts||[]))  if(o.impliedVolatility>0) liveOptions.push({K:o.strike,iv:o.impliedVolatility,type:'put', exp:toDate(o.expiration)});
+  }
+  return {spot:Math.round(spot*100)/100, liveOptions};
+}
+
+async function _cmpFetchSaxo(ticker,statusEl){
+  const token=state.saxoToken.trim();
+  if(!token){ if(statusEl) statusEl.textContent='Saxo: not authenticated — login first'; return null; }
+  const isSim=state.saxoEnv==='sim';
+  const BASE=isSim?'https://gateway.saxobank.com/sim/openapi':'https://gateway.saxobank.com/openapi';
+  const H={'Authorization':'Bearer '+token};
+  const proxyBase=state.saxoProxyUrl?state.saxoProxyUrl.replace(/\/$/,''):'';
+  const env=isSim?'sim':'live';
+  const saxoFetch=path=>proxyBase
+    ?fetch(`${proxyBase}/saxo?env=${env}&path=${encodeURIComponent(path)}`,{headers:H})
+    :fetch(BASE+path,{headers:H});
+  const saxoJson=async path=>{
+    try{const r=await saxoFetch(path);const txt=await r.text();if(!txt||txt.trimStart().startsWith('<'))return null;return JSON.parse(txt);}
+    catch(_){return null;}
+  };
+  const toDate=ts=>new Date(ts*1000).toISOString().slice(0,10);
+
+  // Step 1: find stock Uic
+  if(statusEl) statusEl.textContent=`Saxo: looking up ${ticker}…`;
+  const d1=await saxoJson(`/ref/v1/instruments?Keywords=${encodeURIComponent(ticker)}&AssetTypes=Stock`);
+  if(!d1){ if(statusEl) statusEl.textContent=`Saxo: search failed for ${ticker}`; return null; }
+  if(d1.ErrorCode||d1.Code==='401'){ if(statusEl) statusEl.textContent='Saxo: token expired — re-login'; return null; }
+  const stock=d1.Data?.find(i=>
+    i.Symbol===`${ticker}:xnas`||i.Symbol===`${ticker}:xnys`||i.Symbol===`${ticker}:xase`||
+    (i.Symbol?.startsWith(ticker+':')&&!i.Symbol?.startsWith(ticker+'X')))||d1.Data?.[0];
+  if(!stock){ if(statusEl) statusEl.textContent=`Saxo: ${ticker} not found`; return null; }
+  const uic=stock.Identifier;
+
+  // Step 2: spot via Yahoo proxy
+  let spot=0;
+  if(proxyBase){
+    try{
+      const yr=await fetch(`${proxyBase}/yahoo?ticker=${ticker}`,{cache:'no-cache'});
+      const yd=await yr.json();
+      const yspot=yd?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if(yspot>0) spot=Math.round(yspot*100)/100;
+    }catch(_){}
+  }
+  if(!spot){ if(statusEl) statusEl.textContent=`Saxo: no spot for ${ticker}`; return null; }
+
+  // Step 3: option root → contract spaces
+  if(statusEl) statusEl.textContent=`Saxo: fetching ${ticker} option contracts…`;
+  const dRoots=await saxoJson(`/ref/v1/instruments?Keywords=${encodeURIComponent(ticker)}&AssetTypes=StockOption`);
+  const roots=dRoots?.Data||[];
+  const root=roots.find(i=>i.Symbol?.startsWith(ticker+':')||i.UnderlyingUic===uic)||roots[0];
+
+  let optInstruments=[];
+  if(root){
+    const dSpaces=await saxoJson(`/ref/v1/instruments/contractoptionspaces/${root.Identifier}`);
+    for(const sp of (dSpaces?.OptionSpace||[])){
+      const exp=(sp.Expiry||sp.ExpiryDate||'').slice(0,10);
+      if(!exp) continue;
+      for(const o of (sp.SpecificOptions||[])){
+        if(o.TradingStatus!=='Tradable') continue;
+        optInstruments.push({Identifier:o.Uic,ExpiryDate:exp,StrikePrice:o.StrikePrice,
+          PutCall:o.PutCall,_type:o.PutCall==='Call'?'call':'put'});
+      }
+    }
+  }
+
+  // Fallback to Yahoo options if Saxo returns no contracts (OPRA)
+  if(!optInstruments.length){
+    if(proxyBase){
+      const result=await _cmpFetchYahoo(ticker,statusEl);
+      if(result) return result;
+    }
+    if(statusEl) statusEl.textContent=`Saxo: no contracts for ${ticker} (OPRA subscription needed)`;
+    return null;
+  }
+
+  // Step 4: batch-fetch prices (ATM filter ±60% of spot)
+  const atmInst=optInstruments.filter(o=>o.StrikePrice>=spot*0.4&&o.StrikePrice<=spot*1.6);
+  const uics=atmInst.map(o=>o.Identifier);
+  const priceData=[];
+  for(let i=0;i<uics.length;i+=50){
+    const batch=uics.slice(i,i+50).join(',');
+    const dp=await saxoJson(`/trade/v1/infoprices/list?Uics=${batch}&AssetType=StockOption&FieldGroups=Greeks,Quote,PriceInfo`);
+    if(dp?.Data) priceData.push(...dp.Data);
+  }
+
+  // Step 5: map to liveOptions format
+  const liveOptions=[];
+  for(const p of priceData){
+    const inst=atmInst.find(o=>o.Identifier===p.Uic);
+    if(!inst) continue;
+    const K=inst.StrikePrice??p.DisplayAndFormat?.StrikePrice??p.Greeks?.StrikePrice;
+    if(!K||K<=0) continue;
+    const type=inst._type||((inst.PutCall||'').toLowerCase().includes('put')?'put':'call');
+    const exp=inst.ExpiryDate?.slice(0,10)||'';
+    const bid=p.Quote?.Bid||0; const ask=p.Quote?.Ask||0; const mid=(bid+ask)/2||0;
+    let iv=p.Greeks?.ImpliedVolatility||p.Greeks?.impliedvolatility||0;
+    if(iv>1.5) iv=iv/100;
+    if((!iv||iv<=0)&&mid>0&&exp){
+      const T=Math.max(0,(new Date(exp)-new Date())/(365*24*3600*1000));
+      if(T>0.003) iv=bsIV(mid,spot,K,T,state.rate,type);
+    }
+    if(!iv||iv<=0||iv>5) continue;
+    liveOptions.push({K,iv,type,exp,bid,ask,mid});
+  }
+  if(!liveOptions.length){ if(statusEl) statusEl.textContent=`Saxo: ${ticker} — no valid options (market closed?)`; return null; }
+  return {spot, liveOptions};
 }
 
 function removeCmpTicker(ticker){
@@ -4720,6 +4821,14 @@ function updateCmpControls(){
   const liveCtrl=document.getElementById('cmpLiveControls');
   if(simCtrl)  simCtrl.style.display =isSim?'':'none';
   if(liveCtrl) liveCtrl.style.display=isSim?'none':'';
+  // Update source label in live controls
+  const note=document.getElementById('cmpLiveSourceNote');
+  if(note){
+    const src=state.liveSource;
+    note.textContent=src==='saxo'?'Additional tickers fetched via Saxo (requires active Saxo session)'
+      :src==='ibkr'?'IBKR not yet available — use Yahoo or Saxo'
+      :'Additional tickers fetched via Yahoo Finance (delayed)';
+  }
   if(isSim) renderCmpSimList();
   else      renderCmpTickerList();
 }
