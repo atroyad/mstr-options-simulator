@@ -793,7 +793,7 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <div><canvas id="gVegaChart"></canvas></div>
         </div>
         <!-- Option price chart — vs-Expiry mode only -->
-        <div id="gPriceRow" style="display:none;position:relative;height:90px;margin-top:6px">
+        <div id="gPriceRow" style="display:none;position:relative;height:150px;margin-top:6px">
           <canvas id="gPriceChart"></canvas>
         </div>
         <!-- Roll summary table — live data + vs-Expiry mode only -->
@@ -4385,7 +4385,7 @@ function renderGreeksVsExpiry(){
       }
       const base={label:`$${K} ${suf}`,borderColor:col,backgroundColor:col+'18',
         borderWidth:1.5,pointRadius:0,pointHoverRadius:4,
-        showLine:true,fill:false,tension:0.3,borderDash:dash};
+        showLine:true,fill:false,tension:0,borderDash:dash};
       Object.keys(allDss).forEach(k=>allDss[k].push({...base,data:pts[k]}));
     }
   });
@@ -4418,7 +4418,7 @@ function renderGreeksVsExpiry(){
         if(!pts.delta.length) continue;
         const base={label:`$${K} ${suf}`,borderColor:col,backgroundColor:col+alpha,
           pointRadius:5,pointHoverRadius:7,pointStyle:pStyle,
-          showLine:false,borderWidth:1.5};
+          showLine:true,tension:0,borderWidth:1.5};
         Object.keys(allDss).forEach(k=>{if(pts[k]?.length) allDss[k].push({...base,data:pts[k]});});
       }
     });
@@ -4508,7 +4508,8 @@ function renderRollTable(){
   const entryPx=+(document.getElementById('gRollEntry')?.value||0)||null;
   const showCall=_greeksFilter==='all'||_greeksFilter==='call';
   const showPut =_greeksFilter==='all'||_greeksFilter==='put';
-  const exps=[...new Set(state.liveOptions.filter(o=>getT(o.exp)>0).map(o=>o.exp))].sort();
+  const maxDTE=+(document.getElementById('gDteMax')?.value||180);
+  const exps=[...new Set(state.liveOptions.filter(o=>{const t=getT(o.exp);return t>0&&t*365<=maxDTE;}).map(o=>o.exp))].sort();
   const spot=state.spot;
   const types=[];
   if(showCall) types.push('call');
