@@ -781,37 +781,48 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <button id="cmpfCall" class="lev-btn"    onclick="setCmpFilter('call')" style="font-size:9px;padding:2px 7px">Calls</button>
           <button id="cmpfPut"  class="lev-btn"    onclick="setCmpFilter('put')"  style="font-size:9px;padding:2px 7px">Puts</button>
         </div>
-        <span style="white-space:nowrap;margin-left:auto;display:flex;align-items:center;gap:5px">
+        <span style="margin-left:auto;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
           <button id="cmpActualTBtn" onclick="toggleCmpActualT()"
             style="padding:2px 7px;font-size:9px;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;background:var(--sur2);color:var(--mut)">Actual T</button>
-          DTE target:
-          <input type="number" id="compareDTE" value="7" min="1" max="730" step="1"
-            style="width:42px;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 3px"
-            oninput="renderGreeksComparison()">d
+          <span style="font-size:9px;color:var(--mut);white-space:nowrap">DTE target:
+            <input type="number" id="compareDTE" value="7" min="1" max="730" step="1"
+              style="width:42px;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 3px"
+              oninput="renderGreeksComparison()">d
+          </span>
         </span>
       </div>
       <div class="bd" style="padding:6px 8px">
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-          <label style="font-size:9px;color:var(--mut)">Add file:</label>
-          <input type="file" id="compareFileInput" accept=".json" multiple
-            style="font-size:9px;color:var(--txt)"
-            onchange="loadCompareFiles(this.files)">
-          <button onclick="clearCompareFiles()" style="font-size:9px;padding:1px 6px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Clear all</button>
-          <span id="compareStatus" style="font-size:8px;color:var(--mut)"></span>
-        </div>
-        <div id="compareCharts">
-          <div style="font-size:9px;color:var(--mut);text-align:center;padding:20px" id="cmpPlaceholder">
-            Upload JSON exports from the Prices tab to compare Greeks across stocks.<br>
-            Each file adds one stock. Use "Clear all" to reset.
+        <!-- Sim mode controls -->
+        <div id="cmpSimControls" style="display:none;margin-bottom:6px">
+          <div id="cmpSimList"></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px">
+            <button onclick="addCmpSim()" style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--txt);cursor:pointer">+ Add Simulation</button>
+            <button onclick="clearCmpComparisons()" style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Reset to current</button>
           </div>
-          <!-- Normalized view (Gamma×S, Theta÷S, Vega÷S) -->
+        </div>
+        <!-- Live mode controls -->
+        <div id="cmpLiveControls" style="display:none;margin-bottom:6px">
+          <div id="cmpTickerList" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px"></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <input id="cmpTickerInput" type="text" placeholder="Add ticker…"
+              style="width:72px;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:2px 5px;text-transform:uppercase"
+              oninput="this.value=this.value.toUpperCase()"
+              onkeydown="if(event.key==='Enter')addCmpTicker(this.value)">
+            <button onclick="addCmpTicker(document.getElementById('cmpTickerInput').value)"
+              style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--txt);cursor:pointer">Add</button>
+            <button onclick="clearCmpComparisons()" style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Reset to current</button>
+            <span id="cmpLiveStatus" style="font-size:8px;color:var(--mut)"></span>
+          </div>
+          <div style="font-size:8px;color:var(--mut);margin-top:3px">Additional tickers fetched via Yahoo Finance (delayed)</div>
+        </div>
+        <!-- Charts -->
+        <div id="compareCharts">
           <div class="greeks-grid" id="cmpGrid" style="display:none">
             <div><canvas id="cmpDeltaChart"></canvas></div>
             <div><canvas id="cmpGammaChart"></canvas></div>
             <div><canvas id="cmpThetaChart"></canvas></div>
             <div><canvas id="cmpVegaChart"></canvas></div>
           </div>
-          <!-- Per-option view (same as Greeks tab) -->
           <div class="greeks-grid" id="cmpStkGrid" style="display:none">
             <div><canvas id="cmpStkDeltaChart"></canvas></div>
             <div><canvas id="cmpStkGammaChart"></canvas></div>
@@ -2001,6 +2012,7 @@ function setMode(m){
   document.getElementById('liveBtn').style.display=isLive?'':'none';
   document.getElementById('liveStatus').style.display=isLive?'':'none';
   updateSaxoUI();
+  updateCmpControls();
   if(!isLive){
     setLiveLock(false);
     stopLiveTimer();
@@ -3846,7 +3858,8 @@ function reRenderActiveViews(){
   if(_pane1View==='pnl'||(_splitActive&&_pane2View==='pnl')) renderChart();
   if(_pane1View==='heatmap'||(_splitActive&&_pane2View==='heatmap')) scheduleHeatmap();
   if(_pane1View==='greeks'||(_splitActive&&_pane2View==='greeks')) renderGreeksDashboard();
-  // compare view is data-driven; no auto re-render needed (user triggers via file upload)
+  // compare view: update controls when it becomes visible
+  if(_pane1View==='compare'||(_splitActive&&_pane2View==='compare')) updateCmpControls();
 }
 
 // ── Right sidebar tab switching ──
@@ -4442,25 +4455,25 @@ function renderGreeksDashboard(){
 }
 
 // ═══════════════════════════════════════════════════════
-// CROSS-STOCK GREEKS COMPARISON
+// GREEKS COMPARISON
 // ═══════════════════════════════════════════════════════
-const _compareStocks=[]; // [{ticker, spot, chain}]
+// Sim mode:  _cmpSims  = extra simulation parameter sets (entry 0 always = current state)
+// Live mode: _cmpTickers = extra fetched tickers (entry 0 always = current state.liveOptions)
+const _cmpSims=[];    // [{label,spot,iv,rate,termSlope,ivSurface,skew,conv}]
+const _cmpTickers=[]; // [{ticker,spot,liveOptions}]
 const _cmpCharts={};
-const _CMP_COLORS=['#58a6ff','#3fb950','#f78166','#d2a8ff','#ffa657','#79c0ff','#56d364','#ff7b72'];
-let _cmpView='norm';       // 'norm' | 'stk'
-let _cmpFilter='all';      // 'all' | 'call' | 'put'
-let _cmpUseActualT=false;  // when true, T = actual matched expiry DTE/365 per stock
+const _CMP_COLORS=['#58a6ff','#3fb950','#f78166','#d2a8ff','#ffa657','#79c0ff','#56d364','#ff7b72','#e3b341','#f0883e'];
+let _cmpView='norm';
+let _cmpFilter='all';
+let _cmpUseActualT=false;
 
 function setCmpView(v){
   _cmpView=v;
   const isNorm=v==='norm';
-  document.getElementById('cmpTabNorm').style.background=isNorm?'var(--blu)':'var(--sur2)';
-  document.getElementById('cmpTabNorm').style.color     =isNorm?'#000':'var(--mut)';
-  document.getElementById('cmpTabNorm').style.fontWeight=isNorm?'700':'400';
-  document.getElementById('cmpTabStk').style.background =isNorm?'var(--sur2)':'var(--pur)';
-  document.getElementById('cmpTabStk').style.color      =isNorm?'var(--mut)':'#000';
-  document.getElementById('cmpTabStk').style.fontWeight =isNorm?'400':'700';
-  if(_compareStocks.length) renderGreeksComparison();
+  const n=document.getElementById('cmpTabNorm'),s=document.getElementById('cmpTabStk');
+  if(n){n.style.background=isNorm?'var(--blu)':'var(--sur2)';n.style.color=isNorm?'#000':'var(--mut)';n.style.fontWeight=isNorm?'700':'400';}
+  if(s){s.style.background=isNorm?'var(--sur2)':'var(--pur)';s.style.color=isNorm?'var(--mut)':'#000';s.style.fontWeight=isNorm?'400':'700';}
+  renderGreeksComparison();
 }
 
 function toggleCmpActualT(){
@@ -4472,7 +4485,7 @@ function toggleCmpActualT(){
     btn.style.fontWeight=_cmpUseActualT?'700':'400';
     btn.style.borderColor=_cmpUseActualT?'var(--ylw)':'var(--bdr)';
   }
-  if(_compareStocks.length) renderGreeksComparison();
+  renderGreeksComparison();
 }
 
 function setCmpFilter(f){
@@ -4481,52 +4494,239 @@ function setCmpFilter(f){
     const el=document.getElementById('cmpf'+k.charAt(0).toUpperCase()+k.slice(1));
     if(el) el.classList.toggle('on',k===f);
   });
-  if(_compareStocks.length) renderGreeksComparison();
+  renderGreeksComparison();
 }
 
-function clearCompareFiles(){
-  _compareStocks.length=0;
-  document.getElementById('compareFileInput').value='';
-  document.getElementById('compareStatus').textContent='';
-  ['cmpGrid','cmpStkGrid'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.style.display='none';
-  });
+function clearCmpComparisons(){
+  _cmpSims.length=0;
+  _cmpTickers.length=0;
+  renderCmpSimList();
+  renderCmpTickerList();
+  Object.keys(_cmpCharts).forEach(k=>{if(_cmpCharts[k]){_cmpCharts[k].destroy();delete _cmpCharts[k];}});
   const ph=document.getElementById('cmpPlaceholder');
   if(ph) ph.style.display='';
-  Object.keys(_cmpCharts).forEach(k=>{if(_cmpCharts[k]){_cmpCharts[k].destroy();delete _cmpCharts[k];}});
+  ['cmpGrid','cmpStkGrid'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
 }
 
-async function loadCompareFiles(files){
-  const statusEl=document.getElementById('compareStatus');
-  statusEl.textContent='Loading…';
-  let addedCount=0;
-  for(const f of files){
-    try{
-      const txt=await f.text();
-      const d=JSON.parse(txt);
-      // Expected format: {ticker, spot, chain:{exp:{calls:[{K,iv}], puts:[{K,iv}]}}}
-      if(d.spot&&d.chain){
-        const ticker=d.ticker||f.name.replace('.json','');
-        // Replace if same ticker already loaded, otherwise append
-        const existing=_compareStocks.findIndex(s=>s.ticker===ticker);
-        const entry={ticker,spot:+d.spot,chain:d.chain};
-        if(existing>=0) _compareStocks[existing]=entry;
-        else _compareStocks.push(entry);
-        addedCount++;
-      } else statusEl.textContent+=` [${f.name}: missing spot/chain]`;
-    }catch(e){ statusEl.textContent+=` [${f.name}: parse error]`; }
-  }
-  if(_compareStocks.length===0){ statusEl.textContent='No valid files loaded.'; return; }
-  statusEl.textContent=`Stocks: ${_compareStocks.map(s=>s.ticker).join(', ')}`;
-  document.getElementById('compareFileInput').value=''; // reset so same file can be re-added
+// ── Sim mode: add a simulation parameter snapshot ──
+function addCmpSim(){
+  const idx=_cmpSims.length+1; // extra sims start at 2
+  _cmpSims.push({
+    label:`Sim ${idx+1}`,
+    spot:state.spot, iv:state.iv, rate:state.rate,
+    termSlope:state.termSlope, ivSurface:state.ivSurface,
+    skew:state.smileSkew, conv:state.smileConv,
+  });
+  renderCmpSimList();
   renderGreeksComparison();
+}
+
+function removeCmpSim(idx){
+  _cmpSims.splice(idx,1);
+  renderCmpSimList();
+  renderGreeksComparison();
+}
+
+function renderCmpSimList(){
+  const el=document.getElementById('cmpSimList');
+  if(!el) return;
+  el.innerHTML='';
+  // Entry 0 = current sim (always shown as non-removable label)
+  const cur=document.createElement('div');
+  cur.style.cssText='display:flex;align-items:center;gap:4px;margin-bottom:3px;font-size:9px;color:var(--mut)';
+  cur.innerHTML=`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_CMP_COLORS[0]};flex-shrink:0"></span>`
+    +`<span>Current (S=${state.spot} IV=${(state.iv*100).toFixed(0)}% r=${(state.rate*100).toFixed(1)}%)</span>`;
+  el.appendChild(cur);
+  _cmpSims.forEach((s,i)=>{
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:4px;margin-bottom:3px;font-size:9px;color:var(--txt)';
+    row.innerHTML=`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_CMP_COLORS[(i+1)%_CMP_COLORS.length]};flex-shrink:0"></span>`
+      +`<span>${s.label}: S=${s.spot} IV=${(s.iv*100).toFixed(0)}% r=${(s.rate*100).toFixed(1)}%</span>`
+      +`<button onclick="removeCmpSim(${i})" style="margin-left:auto;font-size:8px;padding:0 4px;background:none;border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">✕</button>`;
+    el.appendChild(row);
+  });
+}
+
+// ── Live mode: add a ticker ──
+async function addCmpTicker(ticker){
+  ticker=(ticker||'').trim().toUpperCase();
+  if(!ticker) return;
+  if(_cmpTickers.find(t=>t.ticker===ticker)){
+    const inp=document.getElementById('cmpTickerInput');
+    if(inp) inp.value='';
+    return;
+  }
+  const statusEl=document.getElementById('cmpLiveStatus');
+  if(statusEl) statusEl.textContent=`Fetching ${ticker}…`;
+
+  const proxyBase=(state.saxoProxyUrl||'').replace(/\/$/,'');
+  if(!proxyBase){
+    if(statusEl) statusEl.textContent='Set proxy URL first';
+    return;
+  }
+
+  try{
+    // Fetch spot
+    const yr=await fetch(`${proxyBase}/yahoo?ticker=${ticker}`,{cache:'no-cache'});
+    const yd=await yr.json();
+    const spot=yd?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    if(!spot){if(statusEl) statusEl.textContent=`No spot for ${ticker}`;return;}
+
+    // Fetch options chain
+    const r2=await fetch(`${proxyBase}/yahoo?ticker=${ticker}&type=options`,{cache:'no-cache'});
+    const d2=await r2.json();
+    const chain=d2?.optionChain?.result?.[0];
+    if(!chain){if(statusEl) statusEl.textContent=`No options for ${ticker}`;return;}
+
+    const liveOptions=[];
+    const toDate=ts=>new Date(ts*1000).toISOString().slice(0,10);
+    for(const page of (chain.options||[])){
+      for(const o of (page.calls||[])) if(o.impliedVolatility>0) liveOptions.push({K:o.strike,iv:o.impliedVolatility,type:'call',exp:toDate(o.expiration)});
+      for(const o of (page.puts||[]))  if(o.impliedVolatility>0) liveOptions.push({K:o.strike,iv:o.impliedVolatility,type:'put', exp:toDate(o.expiration)});
+    }
+
+    _cmpTickers.push({ticker, spot:Math.round(spot*100)/100, liveOptions});
+    if(statusEl) statusEl.textContent='';
+    const inp=document.getElementById('cmpTickerInput');
+    if(inp) inp.value='';
+    renderCmpTickerList();
+    renderGreeksComparison();
+  } catch(e){
+    if(statusEl) statusEl.textContent=`Error: ${e.message}`;
+  }
+}
+
+function removeCmpTicker(ticker){
+  const idx=_cmpTickers.findIndex(t=>t.ticker===ticker);
+  if(idx>=0) _cmpTickers.splice(idx,1);
+  renderCmpTickerList();
+  renderGreeksComparison();
+}
+
+function renderCmpTickerList(){
+  const el=document.getElementById('cmpTickerList');
+  if(!el) return;
+  el.innerHTML='';
+  // Current ticker chip (non-removable)
+  const curChip=document.createElement('span');
+  curChip.style.cssText=`display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;background:${_CMP_COLORS[0]}33;border:1px solid ${_CMP_COLORS[0]};font-size:9px;color:${_CMP_COLORS[0]}`;
+  curChip.textContent=state.ticker||'—';
+  el.appendChild(curChip);
+  _cmpTickers.forEach((t,i)=>{
+    const col=_CMP_COLORS[(i+1)%_CMP_COLORS.length];
+    const chip=document.createElement('span');
+    chip.style.cssText=`display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:10px;background:${col}33;border:1px solid ${col};font-size:9px;color:${col};cursor:pointer`;
+    chip.innerHTML=`${t.ticker}<span onclick="removeCmpTicker('${t.ticker}')" style="margin-left:2px;opacity:0.7;font-size:8px">✕</span>`;
+    el.appendChild(chip);
+  });
+}
+
+function updateCmpControls(){
+  const isSim=state.mode==='sim';
+  const simCtrl=document.getElementById('cmpSimControls');
+  const liveCtrl=document.getElementById('cmpLiveControls');
+  if(simCtrl)  simCtrl.style.display =isSim?'':'none';
+  if(liveCtrl) liveCtrl.style.display=isSim?'none':'';
+  if(isSim) renderCmpSimList();
+  else      renderCmpTickerList();
 }
 
 function renderGreeksComparison(){
   const targetDTE=+(document.getElementById('compareDTE')?.value||7);
-  if(!_compareStocks.length) return;
+  const targetT=targetDTE/365;
+  const getT=_cmpUseActualT ? (aDTE=>Math.max(1/365,aDTE/365)) : (()=>targetT);
 
-  // Show only the active grid
+  // Build moneyness grid 0.40 … 2.00 step 0.025
+  const moneyness=[];
+  for(let m=0.40;m<=2.001;m+=0.025) moneyness.push(+m.toFixed(3));
+
+  // ── Determine entries (datasets source) ──
+  const isSim=state.mode==='sim';
+
+  // Sim mode: build IV from BS model params; Live mode: IV from real options
+  let entries; // [{label, color, getGreek(moneyness, type, getT) -> [values]}]
+
+  if(isSim){
+    // Build all sims = [current state, ..._cmpSims]
+    const allSims=[
+      {label:'Current',spot:state.spot,iv:state.iv,rate:state.rate,
+       termSlope:state.termSlope,ivSurface:state.ivSurface,skew:state.smileSkew,conv:state.smileConv},
+      ..._cmpSims,
+    ];
+    if(allSims.length===0) return;
+    entries=allSims.map((s,si)=>({
+      label:s.label||`Sim ${si+1}`,
+      color:_CMP_COLORS[si%_CMP_COLORS.length],
+      buildData:(key,normFn,type)=>{
+        const S=s.spot;
+        const baseIV=s.iv;
+        const r=s.rate;
+        const T=getT(targetDTE);
+        return moneyness.map(m=>{
+          const K=m*S;
+          // IV: use smile model if ivSurface==='smile', else flat
+          let iv=baseIV;
+          if(s.ivSurface==='smile'){
+            iv=smileIV(K,S,baseIV,s.skew,s.conv);
+          }
+          if(!iv||iv<0.001) return null;
+          const gr=bsAll(S,K,T,r,iv,type);
+          return +normFn(gr[key],S).toFixed(5);
+        });
+      },
+    }));
+  } else {
+    // Live mode: [current state.liveOptions, ..._cmpTickers]
+    const cur={ticker:state.ticker||'Current',spot:state.spot,liveOptions:state.liveOptions};
+    const allLive=[cur,..._cmpTickers];
+    if(!cur.liveOptions||cur.liveOptions.length===0) {
+      // No live data loaded yet
+      const ph=document.getElementById('cmpPlaceholder');
+      if(ph) ph.style.display='';
+      ['cmpGrid','cmpStkGrid'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
+      return;
+    }
+    entries=allLive.map((tk,ti)=>{
+      const S=tk.spot;
+      const opts=tk.liveOptions||[];
+      // Find best expiry per type
+      const exps=[...new Set(opts.map(o=>o.exp))].sort();
+      let bestExp=exps[0], bestDiff=Infinity;
+      for(const e of exps){
+        const d=Math.abs((new Date(e+'T21:00:00')-Date.now())/86400000-targetDTE);
+        if(d<bestDiff){bestDiff=d;bestExp=e;}
+      }
+      const actualDTE=Math.round((new Date(bestExp+'T21:00:00')-Date.now())/86400000);
+      // Build IV lookups keyed by strike
+      const ivLookup={call:{},put:{}};
+      for(const o of opts){
+        if(o.exp!==bestExp) continue;
+        ivLookup[o.type][o.K]=o.iv;
+      }
+      return {
+        label:`${tk.ticker} (${actualDTE}d)`,
+        color:_CMP_COLORS[ti%_CMP_COLORS.length],
+        actualDTE,
+        buildData:(key,normFn,type)=>{
+          const T=getT(actualDTE);
+          const strikes=Object.keys(ivLookup[type]).map(Number).sort((a,b)=>a-b);
+          if(!strikes.length) return moneyness.map(()=>null);
+          return moneyness.map(m=>{
+            const K=m*S;
+            let best=strikes[0],bestD=Infinity;
+            for(const sk of strikes){const d=Math.abs(sk-K);if(d<bestD){bestD=d;best=sk;}}
+            if(bestD>S*0.15) return null;
+            const iv=ivLookup[type][best];
+            if(!iv||iv<0.01) return null;
+            const gr=bsAll(S,best,T,state.rate,iv,type);
+            return +normFn(gr[key],S).toFixed(5);
+          });
+        },
+      };
+    });
+  }
+
+  // ── Show/hide grids ──
   const ph=document.getElementById('cmpPlaceholder');
   if(ph) ph.style.display='none';
   const normGrid=document.getElementById('cmpGrid');
@@ -4534,57 +4734,18 @@ function renderGreeksComparison(){
   if(normGrid) normGrid.style.display=_cmpView==='norm'?'':'none';
   if(stkGrid)  stkGrid.style.display =_cmpView==='stk' ?'':'none';
 
-  // Build moneyness grid 0.4 … 2.0 in steps of 0.025
-  const mLo=0.40, mHi=2.00, mStep=0.025;
-  const moneyness=[];
-  for(let m=mLo;m<=mHi+0.001;m+=mStep) moneyness.push(+m.toFixed(3));
-  const targetT=targetDTE/365;
-  // getT: when Actual T is on, use each stock's actual matched expiry DTE; otherwise fixed target
-  const getT=_cmpUseActualT ? (aDTE=>Math.max(1/365, aDTE/365)) : (()=>targetT);
+  // ── Build Chart.js datasets ──
+  const types=_cmpFilter==='all'?['call','put']:_cmpFilter==='call'?['call']:['put'];
 
-  // Helper: for a stock, find best expiry and build IV lookups
-  function stkExpIV(stk){
-    const S=stk.spot;
-    const exps=Object.keys(stk.chain).sort();
-    let bestExp=exps[0], bestDiff=Infinity;
-    for(const e of exps){
-      const d=Math.abs((new Date(e+'T21:00:00')-new Date())/86400000-targetDTE);
-      if(d<bestDiff){bestDiff=d;bestExp=e;}
-    }
-    const expData=stk.chain[bestExp];
-    const actualDTE=Math.round((new Date(bestExp+'T21:00:00')-new Date())/86400000);
-    const ivLookup={call:{},put:{}};
-    for(const o of (expData?.calls||[])) ivLookup.call[o.K]=o.iv/100;
-    for(const o of (expData?.puts ||[])) ivLookup.put[o.K] =o.iv/100;
-    return{S,ivLookup,actualDTE,bestExp};
-  }
-
-  // Helper: build datasets.
-  // cfgNorm.key = greek key; cfgNorm(v,S) = normalization fn
-  // getT(actualDTE) = function returning the T to use for BS — lets each view control it
-  function buildDatasets(cfgNorm, getT){
-    const types=_cmpFilter==='all'?['call','put']:_cmpFilter==='call'?['call']:['put'];
+  function buildDatasets(key,normFn){
     const datasets=[];
-    _compareStocks.forEach((stk,si)=>{
-      const{S,ivLookup,actualDTE,bestExp}=stkExpIV(stk);
-      const T=getT(actualDTE);
-      types.forEach(type=>{
-        const strikes=Object.keys(ivLookup[type]).map(Number).sort((a,b)=>a-b);
-        if(!strikes.length) return;
-        const color=_CMP_COLORS[(si*2+(type==='put'?1:0))%_CMP_COLORS.length];
-        const data=moneyness.map(m=>{
-          const K=m*S;
-          let best=strikes[0],bestD=Infinity;
-          for(const sk of strikes){const d=Math.abs(sk-K);if(d<bestD){bestD=d;best=sk;}}
-          if(bestD>S*0.15) return null;
-          const iv=ivLookup[type][best];
-          if(!iv||iv<0.01) return null;
-          const gr=bsAll(S,best,T,0.045,iv,type);
-          return +cfgNorm(gr[cfgNorm.key],S).toFixed(5);
-        });
+    entries.forEach((entry,ei)=>{
+      types.forEach((type,ti)=>{
+        const color=_CMP_COLORS[(ei*2+ti)%_CMP_COLORS.length];
         datasets.push({
-          label:`${stk.ticker} ${type}s (${actualDTE}d · ${bestExp})`,
-          data, borderColor:color, backgroundColor:color+'22',
+          label:`${entry.label} ${type}s`,
+          data:entry.buildData(key,normFn,type),
+          borderColor:color, backgroundColor:color+'22',
           borderWidth:1.5, pointRadius:0, pointHoverRadius:3,
           fill:false, tension:0.3,
           borderDash:type==='put'?[4,2]:undefined,
@@ -4594,7 +4755,7 @@ function renderGreeksComparison(){
     return datasets;
   }
 
-  function makeChart(canvasId,datasets,yLabel,yTitle,tooltipFmt){
+  function makeChart(canvasId,datasets,yTitle){
     const canvas=document.getElementById(canvasId);
     if(!canvas) return;
     if(_cmpCharts[canvasId]){_cmpCharts[canvasId].destroy();delete _cmpCharts[canvasId];}
@@ -4611,7 +4772,7 @@ function renderGreeksComparison(){
             titleColor:'#c9d1d9',bodyColor:'#8b949e',
             callbacks:{
               title:i=>`K/S = ${i[0].label}`,
-              label:i=>`${i.dataset.label}: ${i.raw===null?'—':tooltipFmt(i.raw)}`,
+              label:i=>`${i.dataset.label}: ${i.raw===null?'—':i.raw.toFixed(4)}`,
             }
           },
         },
@@ -4623,8 +4784,7 @@ function renderGreeksComparison(){
           },
           y:{
             title:{display:true,text:yTitle,color:'#8b949e',font:{size:7}},
-            ticks:{color:'#8b949e',font:{size:8},maxTicksLimit:5,
-              callback:v=>v===null?'':v.toFixed(3)},
+            ticks:{color:'#8b949e',font:{size:8},maxTicksLimit:5,callback:v=>v===null?'':v.toFixed(3)},
             grid:{color:ctx=>ctx.tick.value===0?'rgba(255,255,255,0.25)':'#21262d'},
             border:{color:'#30363d'},
           }
@@ -4633,34 +4793,21 @@ function renderGreeksComparison(){
     });
   }
 
-  const fmt4=v=>v.toFixed(4);
   const normIds=['cmpDeltaChart','cmpGammaChart','cmpThetaChart','cmpVegaChart'];
   const stkIds =['cmpStkDeltaChart','cmpStkGammaChart','cmpStkThetaChart','cmpStkVegaChart'];
-  function destroyCharts(ids){ ids.forEach(id=>{if(_cmpCharts[id]){_cmpCharts[id].destroy();delete _cmpCharts[id];}}); }
+  function destroyCharts(ids){ids.forEach(id=>{if(_cmpCharts[id]){_cmpCharts[id].destroy();delete _cmpCharts[id];}});}
 
   if(_cmpView==='norm'){
-    const cfgs=[
-      {id:'cmpDeltaChart', key:'delta', norm:(v,S)=>v,   unit:'Δ (norm)'},
-      {id:'cmpGammaChart', key:'gamma', norm:(v,S)=>v*S, unit:'Γ × Spot'},
-      {id:'cmpThetaChart', key:'theta', norm:(v,S)=>v/S, unit:'Θ/S per day'},
-      {id:'cmpVegaChart',  key:'vega',  norm:(v,S)=>v/S, unit:'ν/S per 1%IV'},
-    ];
-    for(const cfg of cfgs){
-      const fn=(v,S)=>cfg.norm(v,S); fn.key=cfg.key;
-      makeChart(cfg.id, buildDatasets(fn, getT), '', cfg.unit, fmt4);
-    }
+    makeChart('cmpDeltaChart', buildDatasets('delta',(v,S)=>v),     'Δ (norm)');
+    makeChart('cmpGammaChart', buildDatasets('gamma',(v,S)=>v*S),   'Γ × Spot');
+    makeChart('cmpThetaChart', buildDatasets('theta',(v,S)=>v/S),   'Θ/S per day');
+    makeChart('cmpVegaChart',  buildDatasets('vega', (v,S)=>v/S),   'ν/S per 1%IV');
     destroyCharts(stkIds);
   } else {
-    const cfgs=[
-      {id:'cmpStkDeltaChart', key:'delta', norm:(v,S)=>v, unit:'Δ (per share)'},
-      {id:'cmpStkGammaChart', key:'gamma', norm:(v,S)=>v, unit:'Γ (per share)'},
-      {id:'cmpStkThetaChart', key:'theta', norm:(v,S)=>v, unit:'Θ/day (per share $)'},
-      {id:'cmpStkVegaChart',  key:'vega',  norm:(v,S)=>v, unit:'ν per 1%IV ($)'},
-    ];
-    for(const cfg of cfgs){
-      const fn=(v,S)=>cfg.norm(v,S); fn.key=cfg.key;
-      makeChart(cfg.id, buildDatasets(fn, getT), '', cfg.unit, fmt4);
-    }
+    makeChart('cmpStkDeltaChart', buildDatasets('delta',(v,S)=>v),  'Δ (per share)');
+    makeChart('cmpStkGammaChart', buildDatasets('gamma',(v,S)=>v),  'Γ (per share)');
+    makeChart('cmpStkThetaChart', buildDatasets('theta',(v,S)=>v),  'Θ/day (per share $)');
+    makeChart('cmpStkVegaChart',  buildDatasets('vega', (v,S)=>v),  'ν per 1%IV ($)');
     destroyCharts(normIds);
   }
 }
