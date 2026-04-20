@@ -2063,17 +2063,25 @@ function setMode(m){
   updateSaxoUI();
   updateCmpControls();
   if(!isLive){
-    setLiveLock(false);
+    // Switch to sim: pause the live refresh timer and unlock sim controls,
+    // but keep state.liveOptions + saxoToken in memory so switching back needs no re-login.
     stopLiveTimer();
-    _smileFitted=false; // reset so next live load re-fits
-    // Clear live market data so sim charts don't show stale live overlays
-    state.liveOptions=[];
+    setLiveLock(false);
     updateGreeksExpiries();
     if(chart){chart.destroy();chart=null;}
     Object.keys(_greeksCharts).forEach(k=>{if(_greeksCharts[k]){_greeksCharts[k].destroy();delete _greeksCharts[k];}});
     renderAll();
+  } else {
+    // Switch back to live: if data is already in memory, re-render immediately.
+    // Only auto-fetch Yahoo (Saxo sessions resume from the stored token automatically).
+    if(state.liveOptions.length>0){
+      setLiveLock(true);
+      renderAll();
+      startLiveTimer();
+    } else if(state.liveSource==='yahoo'){
+      fetchLiveData();
+    }
   }
-  if(isLive&&state.liveSource==='yahoo') fetchLiveData();
 }
 
 function setLiveSource(src){
@@ -4752,11 +4760,9 @@ function renderGreeksComparison(){
         const T=getT(targetDTE);
         return moneyness.map(m=>{
           const K=m*S;
-          // IV: use smile model if ivSurface==='smile', else flat
-          let iv=baseIV;
-          if(s.ivSurface==='smile'){
-            iv=smileIV(K,S,baseIV,s.skew,s.conv);
-          }
+          // Apply term structure: σ_ATM(T) = baseIV × (T_ref/T)^ζ  then strike shape on top
+          const atmAtT=s.termSlope===0?baseIV:baseIV*Math.pow(_TERM_REF/Math.max(T,1/365),s.termSlope);
+          const iv=s.ivSurface==='smile'?smileIV(K,S,atmAtT,s.skew,s.conv):atmAtT;
           if(!iv||iv<0.001) return null;
           const gr=bsAll(S,K,T,r,iv,type);
           return +normFn(gr[key],S).toFixed(5);
