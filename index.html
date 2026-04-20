@@ -789,14 +789,63 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
               style="width:42px;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 3px"
               oninput="renderGreeksComparison()">d
           </span>
+          <span style="font-size:9px;color:var(--mut);white-space:nowrap;display:flex;align-items:center;gap:3px">
+            Zoom:
+            <input type="range" id="cmpZoom" min="0.08" max="0.60" step="0.02" value="0.60"
+              style="width:54px;accent-color:var(--blu)"
+              oninput="document.getElementById('cmpZoomVal').textContent=Math.round(+this.value*100)+'%';renderGreeksComparison()">
+            <span id="cmpZoomVal" style="font-family:monospace;color:var(--blu);min-width:28px">60%</span>
+          </span>
         </span>
       </div>
-      <div class="bd" style="padding:6px 8px">
+      <div class="bd" style="padding:6px 8px;position:relative">
+        <!-- ── Add-simulation modal (hidden overlay within card body) ── -->
+        <div id="cmpSimModal" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(13,17,23,0.92);z-index:10;border-radius:4px;padding:10px;overflow:auto">
+          <div style="font-size:10px;font-weight:700;color:var(--txt);margin-bottom:8px">New Simulation Parameters</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;color:var(--mut);margin-bottom:8px">
+            <div><label style="display:block;margin-bottom:2px">Spot (S)</label>
+              <input type="number" id="cmpSimSpot" step="1" style="width:100%;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:2px 5px"></div>
+            <div><label style="display:block;margin-bottom:2px">IV % (ATM)</label>
+              <input type="number" id="cmpSimIV" step="1" min="1" max="500" style="width:100%;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:2px 5px"></div>
+            <div><label style="display:block;margin-bottom:2px">Term slope ζ</label>
+              <input type="number" id="cmpSimTermSlope" step="0.01" min="-0.5" max="0.5" style="width:100%;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:2px 5px"></div>
+            <div><label style="display:block;margin-bottom:2px">Risk-free rate %</label>
+              <input type="number" id="cmpSimRate" step="0.25" min="0" max="20" style="width:100%;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:2px 5px"></div>
+            <div style="grid-column:span 2"><label style="display:block;margin-bottom:2px">IV Surface</label>
+              <div style="display:flex;gap:4px">
+                <button id="cmpSimSurfFlat" onclick="setCmpSimSurf('flat')"
+                  style="flex:1;font-size:9px;padding:2px 0;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;background:var(--blu);color:#000;font-weight:700">Flat IV</button>
+                <button id="cmpSimSurfSmile" onclick="setCmpSimSurf('smile')"
+                  style="flex:1;font-size:9px;padding:2px 0;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;background:var(--sur2);color:var(--mut)">Vol-Smile</button>
+              </div>
+            </div>
+            <div id="cmpSimSmileRow" style="grid-column:span 2;display:none">
+              <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">
+                <span style="min-width:36px">Skew</span>
+                <input type="range" id="cmpSimSkewIn" min="-0.60" max="0.10" step="0.01"
+                  style="flex:1;accent-color:var(--blu)"
+                  oninput="document.getElementById('cmpSimSkewVal').textContent=(+this.value).toFixed(2)">
+                <span id="cmpSimSkewVal" style="font-family:monospace;min-width:30px;color:var(--blu)">-0.12</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:4px">
+                <span style="min-width:36px">Conv</span>
+                <input type="range" id="cmpSimConvIn" min="0" max="1" step="0.01"
+                  style="flex:1;accent-color:var(--blu)"
+                  oninput="document.getElementById('cmpSimConvVal').textContent=(+this.value).toFixed(2)">
+                <span id="cmpSimConvVal" style="font-family:monospace;min-width:30px;color:var(--blu)">0.20</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;justify-content:flex-end">
+            <button onclick="closeCmpSimModal()" style="font-size:9px;padding:2px 10px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Cancel</button>
+            <button onclick="confirmCmpSimModal()" style="font-size:9px;padding:2px 10px;background:var(--grn);border:1px solid var(--grn);border-radius:3px;color:#000;font-weight:700;cursor:pointer">Add</button>
+          </div>
+        </div>
         <!-- Sim mode controls -->
         <div id="cmpSimControls" style="display:none;margin-bottom:6px">
-          <div id="cmpSimList"></div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px">
-            <button onclick="addCmpSim()" style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--txt);cursor:pointer">+ Add Simulation</button>
+          <div id="cmpSimList" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px"></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button onclick="openCmpSimModal()" style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--txt);cursor:pointer">+ Add Simulation</button>
             <button onclick="clearCmpComparisons()" style="font-size:9px;padding:2px 8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Reset to current</button>
           </div>
         </div>
@@ -3858,8 +3907,11 @@ function reRenderActiveViews(){
   if(_pane1View==='pnl'||(_splitActive&&_pane2View==='pnl')) renderChart();
   if(_pane1View==='heatmap'||(_splitActive&&_pane2View==='heatmap')) scheduleHeatmap();
   if(_pane1View==='greeks'||(_splitActive&&_pane2View==='greeks')) renderGreeksDashboard();
-  // compare view: update controls when it becomes visible
-  if(_pane1View==='compare'||(_splitActive&&_pane2View==='compare')) updateCmpControls();
+  // compare view: update controls when it becomes visible, always re-render (current sim auto-updates)
+  if(_pane1View==='compare'||(_splitActive&&_pane2View==='compare')){
+    updateCmpControls();
+    renderGreeksComparison();
+  }
 }
 
 // ── Right sidebar tab switching ──
@@ -4508,15 +4560,47 @@ function clearCmpComparisons(){
   ['cmpGrid','cmpStkGrid'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});
 }
 
-// ── Sim mode: add a simulation parameter snapshot ──
-function addCmpSim(){
-  const idx=_cmpSims.length+1; // extra sims start at 2
-  _cmpSims.push({
-    label:`Sim ${idx+1}`,
-    spot:state.spot, iv:state.iv, rate:state.rate,
-    termSlope:state.termSlope, ivSurface:state.ivSurface,
-    skew:state.smileSkew, conv:state.smileConv,
-  });
+// ── Sim mode: parameter input modal ──
+let _cmpSimSurf='flat'; // modal local state
+
+function openCmpSimModal(){
+  // Pre-fill with current state
+  document.getElementById('cmpSimSpot').value=state.spot;
+  document.getElementById('cmpSimIV').value=(state.iv*100).toFixed(1);
+  document.getElementById('cmpSimTermSlope').value=state.termSlope;
+  document.getElementById('cmpSimRate').value=(state.rate*100).toFixed(2);
+  document.getElementById('cmpSimSkewIn').value=state.smileSkew;
+  document.getElementById('cmpSimSkewVal').textContent=state.smileSkew.toFixed(2);
+  document.getElementById('cmpSimConvIn').value=state.smileConv;
+  document.getElementById('cmpSimConvVal').textContent=state.smileConv.toFixed(2);
+  setCmpSimSurf(state.ivSurface);
+  document.getElementById('cmpSimModal').style.display='';
+}
+
+function closeCmpSimModal(){
+  document.getElementById('cmpSimModal').style.display='none';
+}
+
+function setCmpSimSurf(v){
+  _cmpSimSurf=v;
+  const flat=document.getElementById('cmpSimSurfFlat');
+  const smile=document.getElementById('cmpSimSurfSmile');
+  const smileRow=document.getElementById('cmpSimSmileRow');
+  if(flat){flat.style.background=v==='flat'?'var(--blu)':'var(--sur2)';flat.style.color=v==='flat'?'#000':'var(--mut)';flat.style.fontWeight=v==='flat'?'700':'400';}
+  if(smile){smile.style.background=v==='smile'?'var(--pur)':'var(--sur2)';smile.style.color=v==='smile'?'#000':'var(--mut)';smile.style.fontWeight=v==='smile'?'700':'400';}
+  if(smileRow) smileRow.style.display=v==='smile'?'':'none';
+}
+
+function confirmCmpSimModal(){
+  const spot=+document.getElementById('cmpSimSpot').value||state.spot;
+  const iv=+(document.getElementById('cmpSimIV').value||50)/100;
+  const termSlope=+document.getElementById('cmpSimTermSlope').value;
+  const rate=+(document.getElementById('cmpSimRate').value||4.5)/100;
+  const skew=+document.getElementById('cmpSimSkewIn').value;
+  const conv=+document.getElementById('cmpSimConvIn').value;
+  const n=_cmpSims.length+2;
+  _cmpSims.push({label:`Sim ${n}`, spot, iv, rate, termSlope, ivSurface:_cmpSimSurf, skew, conv});
+  closeCmpSimModal();
   renderCmpSimList();
   renderGreeksComparison();
 }
@@ -4531,19 +4615,20 @@ function renderCmpSimList(){
   const el=document.getElementById('cmpSimList');
   if(!el) return;
   el.innerHTML='';
-  // Entry 0 = current sim (always shown as non-removable label)
-  const cur=document.createElement('div');
-  cur.style.cssText='display:flex;align-items:center;gap:4px;margin-bottom:3px;font-size:9px;color:var(--mut)';
-  cur.innerHTML=`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_CMP_COLORS[0]};flex-shrink:0"></span>`
-    +`<span>Current (S=${state.spot} IV=${(state.iv*100).toFixed(0)}% r=${(state.rate*100).toFixed(1)}%)</span>`;
-  el.appendChild(cur);
+  // Entry 0 = current sim — non-removable chip
+  const col0=_CMP_COLORS[0];
+  const curChip=document.createElement('span');
+  curChip.title=`S=${state.spot} IV=${(state.iv*100).toFixed(0)}% r=${(state.rate*100).toFixed(1)}% ζ=${state.termSlope} ${state.ivSurface}`;
+  curChip.style.cssText=`display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;background:${col0}33;border:1px solid ${col0};font-size:9px;color:${col0}`;
+  curChip.textContent='Current';
+  el.appendChild(curChip);
   _cmpSims.forEach((s,i)=>{
-    const row=document.createElement('div');
-    row.style.cssText='display:flex;align-items:center;gap:4px;margin-bottom:3px;font-size:9px;color:var(--txt)';
-    row.innerHTML=`<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_CMP_COLORS[(i+1)%_CMP_COLORS.length]};flex-shrink:0"></span>`
-      +`<span>${s.label}: S=${s.spot} IV=${(s.iv*100).toFixed(0)}% r=${(s.rate*100).toFixed(1)}%</span>`
-      +`<button onclick="removeCmpSim(${i})" style="margin-left:auto;font-size:8px;padding:0 4px;background:none;border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">✕</button>`;
-    el.appendChild(row);
+    const col=_CMP_COLORS[(i+1)%_CMP_COLORS.length];
+    const chip=document.createElement('span');
+    chip.title=`S=${s.spot} IV=${(s.iv*100).toFixed(0)}% r=${(s.rate*100).toFixed(1)}% ζ=${s.termSlope} ${s.ivSurface}`;
+    chip.style.cssText=`display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;background:${col}33;border:1px solid ${col};font-size:9px;color:${col}`;
+    chip.innerHTML=`${s.label}<span onclick="removeCmpSim(${i})" style="margin-left:2px;opacity:0.7;font-size:8px;cursor:pointer">✕</span>`;
+    el.appendChild(chip);
   });
 }
 
@@ -4636,9 +4721,12 @@ function renderGreeksComparison(){
   const targetT=targetDTE/365;
   const getT=_cmpUseActualT ? (aDTE=>Math.max(1/365,aDTE/365)) : (()=>targetT);
 
-  // Build moneyness grid 0.40 … 2.00 step 0.025
+  // Build moneyness grid centred on 1.0, half-width from zoom slider
+  const halfW=+(document.getElementById('cmpZoom')?.value||0.60);
+  const mLo=Math.max(0.40, +(1-halfW).toFixed(3));
+  const mHi=Math.min(2.00, +(1+halfW).toFixed(3));
   const moneyness=[];
-  for(let m=0.40;m<=2.001;m+=0.025) moneyness.push(+m.toFixed(3));
+  for(let m=mLo;m<=mHi+0.001;m+=0.025) moneyness.push(+m.toFixed(3));
 
   // ── Determine entries (datasets source) ──
   const isSim=state.mode==='sim';
