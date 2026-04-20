@@ -768,7 +768,19 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
     <div class="card view-card" id="cmpCard" style="display:none">
       <div class="hd" style="height:auto;padding:4px 8px;gap:6px;flex-wrap:wrap">
         <h3>Greeks Comparison</h3>
-        <span style="font-size:9px;color:var(--mut)">Upload exported JSON snapshots · moneyness x-axis · normalized by spot</span>
+        <!-- View tabs -->
+        <div style="display:flex;gap:2px;border:1px solid var(--bdr);border-radius:4px;overflow:hidden;flex-shrink:0">
+          <button id="cmpTabNorm" onclick="setCmpView('norm')"
+            style="padding:2px 8px;font-size:9px;border:none;cursor:pointer;background:var(--blu);color:#000;font-weight:700">Normalized</button>
+          <button id="cmpTabStk" onclick="setCmpView('stk')"
+            style="padding:2px 8px;font-size:9px;border:none;cursor:pointer;background:var(--sur2);color:var(--mut)">Per-Option</button>
+        </div>
+        <!-- Call/Put filter -->
+        <div style="display:flex;gap:2px;flex-shrink:0">
+          <button id="cmpfAll"  class="lev-btn on" onclick="setCmpFilter('all')"  style="font-size:9px;padding:2px 7px">All</button>
+          <button id="cmpfCall" class="lev-btn"    onclick="setCmpFilter('call')" style="font-size:9px;padding:2px 7px">Calls</button>
+          <button id="cmpfPut"  class="lev-btn"    onclick="setCmpFilter('put')"  style="font-size:9px;padding:2px 7px">Puts</button>
+        </div>
         <span style="white-space:nowrap;margin-left:auto">DTE target:
           <input type="number" id="compareDTE" value="7" min="1" max="730" step="1"
             style="width:42px;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 3px"
@@ -777,20 +789,19 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
       </div>
       <div class="bd" style="padding:6px 8px">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-          <label style="font-size:9px;color:var(--mut)">Load files:</label>
+          <label style="font-size:9px;color:var(--mut)">Add file:</label>
           <input type="file" id="compareFileInput" accept=".json" multiple
             style="font-size:9px;color:var(--txt)"
             onchange="loadCompareFiles(this.files)">
-          <button onclick="clearCompareFiles()" style="font-size:9px;padding:1px 6px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Clear</button>
+          <button onclick="clearCompareFiles()" style="font-size:9px;padding:1px 6px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--mut);cursor:pointer">Clear all</button>
           <span id="compareStatus" style="font-size:8px;color:var(--mut)"></span>
         </div>
         <div id="compareCharts">
           <div style="font-size:9px;color:var(--mut);text-align:center;padding:20px" id="cmpPlaceholder">
             Upload JSON exports from the Prices tab to compare Greeks across stocks.<br>
-            Delta is unitless · Gamma × Spot · Theta ÷ Spot · Vega ÷ Spot
+            Each file adds one stock. Use "Clear all" to reset.
           </div>
           <!-- Normalized view (Gamma×S, Theta÷S, Vega÷S) -->
-          <div style="font-size:8px;color:var(--mut);margin:4px 0 2px;display:none" id="cmpNormLabel">Normalized (Γ×S · Θ÷S · ν÷S) — moneyness x-axis</div>
           <div class="greeks-grid" id="cmpGrid" style="display:none">
             <div><canvas id="cmpDeltaChart"></canvas></div>
             <div><canvas id="cmpGammaChart"></canvas></div>
@@ -798,7 +809,6 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
             <div><canvas id="cmpVegaChart"></canvas></div>
           </div>
           <!-- Per-option view (same as Greeks tab) -->
-          <div style="font-size:8px;color:var(--mut);margin:10px 0 2px;display:none" id="cmpStkLabel">Per-Option Greeks (per share) — moneyness x-axis</div>
           <div class="greeks-grid" id="cmpStkGrid" style="display:none">
             <div><canvas id="cmpStkDeltaChart"></canvas></div>
             <div><canvas id="cmpStkGammaChart"></canvas></div>
@@ -947,6 +957,15 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
           <select id="pcExpiry" onchange="renderPricesTable()" style="font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 3px">
             <option value="all">All expiries</option>
           </select>
+          <!-- Sim-mode expiry grid controls (hidden in live mode) -->
+          <span id="simExpControls" style="display:flex;align-items:center;gap:4px;font-size:9px;color:var(--mut)">
+            Step:&nbsp;<input type="number" id="simDteStep" value="7" min="1" max="365" step="1"
+              style="width:34px;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 3px"
+              oninput="renderPricesTable()">d
+            &nbsp;Count:&nbsp;<input type="number" id="simExpCount" value="50" min="1" max="200" step="1"
+              style="width:36px;font-size:9px;background:var(--sur2);border:1px solid var(--bdr);color:var(--txt);border-radius:3px;padding:1px 3px"
+              oninput="renderPricesTable()">
+          </span>
           <button id="exportBtn" onclick="exportOptionsData()" style="font-size:9px;padding:2px 7px;background:var(--sur2);border:1px solid var(--bdr);border-radius:3px;color:var(--txt);cursor:pointer;white-space:nowrap">⬇ Export CSV</button>
           <span id="pcLiveNote" style="font-size:9px;color:var(--ylw)"></span>
         </div>
@@ -1458,6 +1477,16 @@ function stdExpiries(nMonths){
   // Filter to only future dates (≥ 1 day away)
   return exps.filter(e=>e-now>86400000).map(e=>e.toISOString().slice(0,10));
 }
+// Generate N expiry dates spaced dteDays apart from today
+function simExpiriesEvery(dteDays, count){
+  const exps=[];
+  const now=new Date();
+  for(let i=1;i<=count;i++){
+    const d=new Date(now.getTime()+i*dteDays*86400000);
+    exps.push(d.toISOString().slice(0,10));
+  }
+  return exps;
+}
 
 // Generate a strike grid centred on spot for a given spot price
 function simStrikeGrid(S){
@@ -1475,9 +1504,15 @@ function renderPricesTable(){
   const note=document.getElementById('pcLiveNote');
   if(!tbody) return;
 
+  // Show/hide sim expiry grid controls
+  const simCtrl=document.getElementById('simExpControls');
+  if(simCtrl) simCtrl.style.display=state.mode==='sim'?'flex':'none';
+
   // ── SIM MODE: generate synthetic prices ──
   if(state.mode==='sim'){
-    const allExps=stdExpiries(24);
+    const dteDays=Math.max(1,+(document.getElementById('simDteStep')?.value||7));
+    const expCount=Math.max(1,Math.min(200,+(document.getElementById('simExpCount')?.value||50)));
+    const allExps=simExpiriesEvery(dteDays, expCount);
     const curExp=expirySelect.value;
     expirySelect.innerHTML=allExps.map(e=>`<option value="${e}"${e===curExp?'selected':''}>${e}${dteSuffix(e)}</option>`).join('');
     if(!expirySelect.value&&allExps.length) expirySelect.value=allExps[0];
@@ -2621,8 +2656,8 @@ function setChartView(v){
   document.getElementById('chartTitle').textContent=
     isPnl?`Options P&L vs ${state.ticker||'Spot'} Price`:'Implied Volatility vs Strike (Vol Smile)';
   if(chart){chart.destroy();chart=null;}
-  // Defer one frame so show/hide CSS changes settle before Chart.js measures canvas size
-  requestAnimationFrame(()=>renderChart());
+  // Double-rAF: wait two frames so CSS layout fully settles before Chart.js measures canvas
+  requestAnimationFrame(()=>requestAnimationFrame(()=>renderChart()));
 }
 
 function setIVSurface(v){
@@ -4143,7 +4178,10 @@ function updateGreeksExpiries(){
   let src=state.liveOptions.length>0?state.liveOptions:state.legs;
   let simExpMode=false;
   if(src.length===0&&state.mode==='sim'){
-    src=stdExpiries(12).map(e=>({exp:e}));
+    // Use same DTE step/count as prices tab
+    const dteDays=Math.max(1,+(document.getElementById('simDteStep')?.value||7));
+    const expCount=Math.max(1,Math.min(50,+(document.getElementById('simExpCount')?.value||50)));
+    src=simExpiriesEvery(dteDays, expCount).map(e=>({exp:e}));
     simExpMode=true;
   }
   const exps=[...new Set(src.map(o=>o.exp))].sort();
@@ -4400,12 +4438,35 @@ function renderGreeksDashboard(){
 const _compareStocks=[]; // [{ticker, spot, chain}]
 const _cmpCharts={};
 const _CMP_COLORS=['#58a6ff','#3fb950','#f78166','#d2a8ff','#ffa657','#79c0ff','#56d364','#ff7b72'];
+let _cmpView='norm';  // 'norm' | 'stk'
+let _cmpFilter='all'; // 'all' | 'call' | 'put'
+
+function setCmpView(v){
+  _cmpView=v;
+  const isNorm=v==='norm';
+  document.getElementById('cmpTabNorm').style.background=isNorm?'var(--blu)':'var(--sur2)';
+  document.getElementById('cmpTabNorm').style.color     =isNorm?'#000':'var(--mut)';
+  document.getElementById('cmpTabNorm').style.fontWeight=isNorm?'700':'400';
+  document.getElementById('cmpTabStk').style.background =isNorm?'var(--sur2)':'var(--pur)';
+  document.getElementById('cmpTabStk').style.color      =isNorm?'var(--mut)':'#000';
+  document.getElementById('cmpTabStk').style.fontWeight =isNorm?'400':'700';
+  if(_compareStocks.length) renderGreeksComparison();
+}
+
+function setCmpFilter(f){
+  _cmpFilter=f;
+  ['all','call','put'].forEach(k=>{
+    const el=document.getElementById('cmpf'+k.charAt(0).toUpperCase()+k.slice(1));
+    if(el) el.classList.toggle('on',k===f);
+  });
+  if(_compareStocks.length) renderGreeksComparison();
+}
 
 function clearCompareFiles(){
   _compareStocks.length=0;
   document.getElementById('compareFileInput').value='';
   document.getElementById('compareStatus').textContent='';
-  ['cmpGrid','cmpStkGrid','cmpNormLabel','cmpStkLabel'].forEach(id=>{
+  ['cmpGrid','cmpStkGrid'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.style.display='none';
   });
   const ph=document.getElementById('cmpPlaceholder');
@@ -4414,37 +4475,42 @@ function clearCompareFiles(){
 }
 
 async function loadCompareFiles(files){
-  _compareStocks.length=0;
   const statusEl=document.getElementById('compareStatus');
   statusEl.textContent='Loading…';
-  const loaded=[];
+  let addedCount=0;
   for(const f of files){
     try{
       const txt=await f.text();
       const d=JSON.parse(txt);
       // Expected format: {ticker, spot, chain:{exp:{calls:[{K,iv}], puts:[{K,iv}]}}}
-      if(d.spot&&d.chain) loaded.push({ticker:d.ticker||f.name.replace('.json',''),spot:+d.spot,chain:d.chain});
-      else statusEl.textContent+=` [${f.name}: missing spot/chain]`;
+      if(d.spot&&d.chain){
+        const ticker=d.ticker||f.name.replace('.json','');
+        // Replace if same ticker already loaded, otherwise append
+        const existing=_compareStocks.findIndex(s=>s.ticker===ticker);
+        const entry={ticker,spot:+d.spot,chain:d.chain};
+        if(existing>=0) _compareStocks[existing]=entry;
+        else _compareStocks.push(entry);
+        addedCount++;
+      } else statusEl.textContent+=` [${f.name}: missing spot/chain]`;
     }catch(e){ statusEl.textContent+=` [${f.name}: parse error]`; }
   }
-  _compareStocks.push(...loaded);
   if(_compareStocks.length===0){ statusEl.textContent='No valid files loaded.'; return; }
-  statusEl.textContent=`Loaded: ${_compareStocks.map(s=>s.ticker).join(', ')}`;
+  statusEl.textContent=`Stocks: ${_compareStocks.map(s=>s.ticker).join(', ')}`;
+  document.getElementById('compareFileInput').value=''; // reset so same file can be re-added
   renderGreeksComparison();
 }
 
 function renderGreeksComparison(){
   const targetDTE=+(document.getElementById('compareDTE')?.value||7);
   if(!_compareStocks.length) return;
-  // Show grids, hide placeholder, show section labels
-  ['cmpGrid','cmpStkGrid'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.style.display='';
-  });
-  ['cmpNormLabel','cmpStkLabel'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.style.display='';
-  });
+
+  // Show only the active grid; hide the other
   const ph=document.getElementById('cmpPlaceholder');
   if(ph) ph.style.display='none';
+  const normGrid=document.getElementById('cmpGrid');
+  const stkGrid=document.getElementById('cmpStkGrid');
+  if(normGrid) normGrid.style.display=_cmpView==='norm'?'':'none';
+  if(stkGrid)  stkGrid.style.display =_cmpView==='stk' ?'':'none';
 
   // Build moneyness grid 0.4 … 2.0 in steps of 0.025
   const mLo=0.40, mHi=2.00, mStep=0.025;
@@ -4466,15 +4532,16 @@ function renderGreeksComparison(){
     const ivLookup={call:{},put:{}};
     for(const o of (expData?.calls||[])) ivLookup.call[o.K]=o.iv/100;
     for(const o of (expData?.puts ||[])) ivLookup.put[o.K] =o.iv/100;
-    return{S,ivLookup,actualDTE};
+    return{S,ivLookup,actualDTE,bestExp};
   }
 
-  // Helper: build datasets for one chart configuration
+  // Helper: build datasets for one chart configuration, respecting _cmpFilter
   function buildDatasets(cfgNorm){
+    const types=_cmpFilter==='all'?['call','put']:_cmpFilter==='call'?['call']:['put'];
     const datasets=[];
     _compareStocks.forEach((stk,si)=>{
-      const{S,ivLookup,actualDTE}=stkExpIV(stk);
-      ['call','put'].forEach(type=>{
+      const{S,ivLookup,actualDTE,bestExp}=stkExpIV(stk);
+      types.forEach(type=>{
         const strikes=Object.keys(ivLookup[type]).map(Number).sort((a,b)=>a-b);
         if(!strikes.length) return;
         const color=_CMP_COLORS[(si*2+(type==='put'?1:0))%_CMP_COLORS.length];
@@ -4489,7 +4556,7 @@ function renderGreeksComparison(){
           return +cfgNorm(gr[cfgNorm.key],S).toFixed(5);
         });
         datasets.push({
-          label:`${stk.ticker} ${type}s (${actualDTE}d)`,
+          label:`${stk.ticker} ${type}s (${actualDTE}d · ${bestExp})`,
           data, borderColor:color, backgroundColor:color+'22',
           borderWidth:1.5, pointRadius:0, pointHoverRadius:3,
           fill:false, tension:0.3,
@@ -4500,7 +4567,7 @@ function renderGreeksComparison(){
     return datasets;
   }
 
-  function makeChart(canvasId,datasets,yLabel,xTitle,yTitle,tooltipFmt){
+  function makeChart(canvasId,datasets,yLabel,yTitle,tooltipFmt){
     const canvas=document.getElementById(canvasId);
     if(!canvas) return;
     if(_cmpCharts[canvasId]){_cmpCharts[canvasId].destroy();delete _cmpCharts[canvasId];}
@@ -4525,7 +4592,7 @@ function renderGreeksComparison(){
           x:{
             ticks:{color:'#8b949e',font:{size:8},maxTicksLimit:9,autoSkip:true,maxRotation:0},
             grid:{color:'#21262d'},border:{color:'#30363d'},
-            title:{display:true,text:xTitle,color:'#8b949e',font:{size:7}},
+            title:{display:true,text:'Moneyness K/S',color:'#8b949e',font:{size:7}},
           },
           y:{
             title:{display:true,text:yTitle,color:'#8b949e',font:{size:7}},
@@ -4541,28 +4608,36 @@ function renderGreeksComparison(){
 
   const fmt4=v=>v.toFixed(4);
 
-  // ── Normalized view (Γ×S, Θ÷S, ν÷S) ──
-  const normCfgs=[
-    {id:'cmpDeltaChart', key:'delta', norm:(v,S)=>v,   unit:'Δ (norm)',      yLbl:'Δ'},
-    {id:'cmpGammaChart', key:'gamma', norm:(v,S)=>v*S, unit:'Γ × Spot',      yLbl:'Γ×S'},
-    {id:'cmpThetaChart', key:'theta', norm:(v,S)=>v/S, unit:'Θ/S per day',   yLbl:'Θ/S'},
-    {id:'cmpVegaChart',  key:'vega',  norm:(v,S)=>v/S, unit:'ν/S per 1%IV',  yLbl:'ν/S'},
-  ];
-  for(const cfg of normCfgs){
-    const fn=(v,S)=>cfg.norm(v,S); fn.key=cfg.key;
-    makeChart(cfg.id, buildDatasets(fn), cfg.yLbl, 'Moneyness K/S', cfg.unit, fmt4);
-  }
-
-  // ── Per-option view (same as Greeks tab — raw per-share values) ──
-  const rawCfgs=[
-    {id:'cmpStkDeltaChart', key:'delta', norm:(v,S)=>v,  unit:'Δ (per share)',       yLbl:'Δ'},
-    {id:'cmpStkGammaChart', key:'gamma', norm:(v,S)=>v,  unit:'Γ (per share)',        yLbl:'Γ'},
-    {id:'cmpStkThetaChart', key:'theta', norm:(v,S)=>v,  unit:'Θ/day (per share $)', yLbl:'Θ'},
-    {id:'cmpStkVegaChart',  key:'vega',  norm:(v,S)=>v,  unit:'ν per 1%IV ($)',      yLbl:'ν'},
-  ];
-  for(const cfg of rawCfgs){
-    const fn=(v,S)=>cfg.norm(v,S); fn.key=cfg.key;
-    makeChart(cfg.id, buildDatasets(fn), cfg.yLbl, 'Moneyness K/S', cfg.unit, fmt4);
+  if(_cmpView==='norm'){
+    // ── Normalized view (Γ×S, Θ÷S, ν÷S) — for cross-stock comparison ──
+    const normCfgs=[
+      {id:'cmpDeltaChart', key:'delta', norm:(v,S)=>v,   unit:'Δ (norm)',     },
+      {id:'cmpGammaChart', key:'gamma', norm:(v,S)=>v*S, unit:'Γ × Spot',     },
+      {id:'cmpThetaChart', key:'theta', norm:(v,S)=>v/S, unit:'Θ/S per day',  },
+      {id:'cmpVegaChart',  key:'vega',  norm:(v,S)=>v/S, unit:'ν/S per 1%IV', },
+    ];
+    for(const cfg of normCfgs){
+      const fn=(v,S)=>cfg.norm(v,S); fn.key=cfg.key;
+      makeChart(cfg.id, buildDatasets(fn), '', cfg.unit, fmt4);
+    }
+    // Destroy per-option charts (avoid invisible canvas resource leak)
+    ['cmpStkDeltaChart','cmpStkGammaChart','cmpStkThetaChart','cmpStkVegaChart']
+      .forEach(id=>{if(_cmpCharts[id]){_cmpCharts[id].destroy();delete _cmpCharts[id];}});
+  } else {
+    // ── Per-option view (raw per-share values, same as Greeks tab) ──
+    const rawCfgs=[
+      {id:'cmpStkDeltaChart', key:'delta', norm:(v,S)=>v, unit:'Δ (per share)',      },
+      {id:'cmpStkGammaChart', key:'gamma', norm:(v,S)=>v, unit:'Γ (per share)',       },
+      {id:'cmpStkThetaChart', key:'theta', norm:(v,S)=>v, unit:'Θ/day (per share $)',},
+      {id:'cmpStkVegaChart',  key:'vega',  norm:(v,S)=>v, unit:'ν per 1%IV ($)',     },
+    ];
+    for(const cfg of rawCfgs){
+      const fn=(v,S)=>cfg.norm(v,S); fn.key=cfg.key;
+      makeChart(cfg.id, buildDatasets(fn), '', cfg.unit, fmt4);
+    }
+    // Destroy normalized charts
+    ['cmpDeltaChart','cmpGammaChart','cmpThetaChart','cmpVegaChart']
+      .forEach(id=>{if(_cmpCharts[id]){_cmpCharts[id].destroy();delete _cmpCharts[id];}});
   }
 }
 
@@ -4574,6 +4649,7 @@ window.addEventListener('load',()=>{
   initHmRange();
   initResizers();
   _applyViewLayout();
+  setMode(state.mode); // apply initial mode UI (greyed ticker in sim, etc.)
 
   // ── Saxo redirect-back detection (mobile / popup-blocked fallback) ──
   const _urlParams=new URLSearchParams(window.location.search);
