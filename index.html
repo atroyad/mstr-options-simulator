@@ -5032,29 +5032,31 @@ function renderGreeksDashboard(){
 
       // Price info line (ATM call + put)
       if(priceInfoEl&&atmK!=null){
-        const buildPriceInfo=(type,color)=>{
+        const buildPriceInfo=(type)=>{
           const o=callOpts.concat(putOpts).find(x=>x.K===atmK&&x.type===type);
           if(!o) return '';
           const iv0=getIVat(o,spot), ivS=getIVat(o,scenSpot);
-          const p0=bsPrice(spot, atmK,T,state.rate,iv0,type);
-          const pS=bsPrice(scenSpot,atmK,T,state.rate,ivS,type);
+          // Apply same mktOffset as P&L chart so prices are consistent
+          const bsAt0=bsPrice(spot,    atmK,T,state.rate,iv0,type);
+          const mktOff=(liveChainMid(atmK,selExp,type)??bsAt0)-bsAt0;
+          const p0=bsAt0+mktOff;
+          const pS=bsPrice(scenSpot,atmK,T,state.rate,ivS,type)+mktOff;
           const dP=pS-p0, pct=p0>0.001?dP/p0*100:0;
           const sign=dP>=0?'+':'';
           const col=dP>=0?'#3fb950':'#f85149';
-          return `<span style="margin-right:12px">ATM ${type} ($${atmK}): `
+          return `<span style="margin-right:12px">${type} ($${atmK}): `
             +`<span style="color:var(--txt)">$${p0.toFixed(2)}</span> → `
             +`<span style="color:${col};font-weight:600">$${pS.toFixed(2)} `
             +`(${sign}$${dP.toFixed(2)}, ${sign}${pct.toFixed(1)}%)</span></span>`;
         };
         const infoHTML=buildPriceInfo('call')+'&nbsp;'+buildPriceInfo('put');
-        priceInfoEl.innerHTML=`<span style="color:var(--mut)">ATM option prices:</span> `+infoHTML;
+        priceInfoEl.innerHTML=`<span style="color:var(--mut)">Market-anchored option prices — current → scenario:</span> `+infoHTML;
         priceInfoEl.style.display='';
       }
 
       // Comparison table
       if(scTableEl){
         const fmt4=v=>(v>=0?'':'-')+Math.abs(v).toFixed(4);
-        const fmt2=v=>(v>=0?'':'-')+'$'+Math.abs(v).toFixed(2);
         const fmtIV=v=>(v*100).toFixed(1)+'%';
         const diff=(a,b,inv=false)=>{
           const d=b-a; if(Math.abs(d)<1e-6) return '';
@@ -5084,7 +5086,8 @@ function renderGreeksDashboard(){
         const scenSpotFmt='$'+scenSpot.toFixed(0);
         const spotFmt='$'+spot.toFixed(0);
 
-        let html=`<div style="font-size:8px;color:var(--mut);margin-bottom:3px">Greeks comparison: current spot ${spotFmt} vs scenario ${scenSpotFmt}</div>
+        let html=`<div style="font-size:8px;color:var(--mut);margin-bottom:3px">Greeks & prices: current spot ${spotFmt} vs scenario ${scenSpotFmt} `
+          +`<span style="color:var(--ylw)">(prices anchored to live market mid — consistent with P&L chart)</span></div>
 <table style="border-collapse:collapse;font-size:8px;color:var(--txt);min-width:700px;width:100%">
 <thead>
 <tr style="color:var(--mut);background:var(--sur2)">
@@ -5108,10 +5111,13 @@ function renderGreeksDashboard(){
         const allOptsForTable=[...callOpts,...putOpts].sort((a,b)=>a.K-b.K||(a.type==='call'?-1:1));
         for(const o of allOptsForTable){
           const iv0=getIVat(o,spot), ivS=getIVat(o,scenSpot);
-          const g0=bsAll(spot,   o.K,T,state.rate,iv0,o.type);
+          const g0=bsAll(spot,    o.K,T,state.rate,iv0,o.type);
           const gS=bsAll(scenSpot,o.K,T,state.rate,ivS,o.type);
-          const p0=bsPrice(spot,   o.K,T,state.rate,iv0,o.type);
-          const pS=bsPrice(scenSpot,o.K,T,state.rate,ivS,o.type);
+          // Market-anchor offset: same correction as P&L chart so prices are consistent
+          const bsAt0=bsPrice(spot,o.K,T,state.rate,iv0,o.type);
+          const mktOff=(liveChainMid(o.K,o.exp,o.type)??bsAt0)-bsAt0;
+          const p0=bsAt0+mktOff;
+          const pS=bsPrice(scenSpot,o.K,T,state.rate,ivS,o.type)+mktOff;
           const isAtm=o.K===atmK;
           const rowBg=isAtm?'background:rgba(255,193,7,0.06)':'';
           const typeCol=o.type==='call'?'#58a6ff':'#f85149';
