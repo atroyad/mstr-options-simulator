@@ -768,6 +768,22 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
                 oninput="onRangePctSlider('g',+this.value)">
             </span>
           </div>
+          <!-- Scenario spot simulation row -->
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:2px 0 3px">
+            <button id="gSimSpotBtn" onclick="toggleGreeksSimSpot()"
+              style="font-size:8px;padding:2px 7px;border:1px solid var(--bdr);border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer;white-space:nowrap">
+              + Scenario spot
+            </button>
+            <div id="gSimSpotRow" style="display:none;flex:1;align-items:center;gap:5px;flex-wrap:wrap">
+              <span style="font-size:9px;color:var(--mut);white-space:nowrap">Scenario S:</span>
+              <input type="range" id="gSimSpotSlider" min="1" max="1000" step="1" value="170"
+                style="flex:1;min-width:80px;accent-color:var(--ylw);height:3px"
+                oninput="onGreeksSimSpotSlider(+this.value)">
+              <span id="gSimSpotVal" style="font-family:monospace;font-size:9px;color:var(--ylw);min-width:44px">$170</span>
+              <span id="gSimSpotIV" style="font-size:8px;color:var(--mut);min-width:70px"></span>
+              <button onclick="resetGreeksSimSpot()" style="font-size:8px;padding:1px 5px;border:1px solid var(--bdr);border-radius:3px;background:var(--sur2);color:var(--mut);cursor:pointer">↺</button>
+            </div>
+          </div>
         </div>
         <!-- vs-Expiry controls -->
         <div id="gExpiryControls" style="display:none;margin-bottom:4px">
@@ -4343,8 +4359,64 @@ let _greeksFilter='all'; // 'all' | 'call' | 'put'
 let _greeksVsExp='strike'; // 'strike' | 'expiry'
 let _rollStrikes=[];       // selected strikes for vs-Expiry mode
 let _gPriceChart=null;     // Chart.js instance for option price chart
+let _gSimSpotActive=false; // whether scenario spot overlay is shown
+let _gSimSpot=null;        // scenario spot value (null = use state.spot)
 
 const _ROLL_COLORS=['#58a6ff','#3fb950','#f78166','#d2a8ff','#ffa657','#79c0ff','#56d364','#ff7b72','#e3b341','#f0883e'];
+
+// ── Scenario spot simulation (vs-Strike mode) ──
+function toggleGreeksSimSpot(){
+  _gSimSpotActive=!_gSimSpotActive;
+  const btn=document.getElementById('gSimSpotBtn');
+  const row=document.getElementById('gSimSpotRow');
+  if(btn){
+    btn.textContent=_gSimSpotActive?'× Scenario spot':'+ Scenario spot';
+    btn.style.background=_gSimSpotActive?'var(--ylw)':'var(--sur2)';
+    btn.style.color=_gSimSpotActive?'#000':'var(--mut)';
+    btn.style.borderColor=_gSimSpotActive?'var(--ylw)':'var(--bdr)';
+  }
+  if(row) row.style.display=_gSimSpotActive?'flex':'none';
+  if(_gSimSpotActive){
+    // Initialise slider to current spot on first open
+    if(_gSimSpot===null) _gSimSpot=state.spot;
+    _syncSimSpotSlider(_gSimSpot);
+  } else {
+    _gSimSpot=null;
+  }
+  renderGreeksDashboard();
+}
+function resetGreeksSimSpot(){
+  _gSimSpot=state.spot;
+  _syncSimSpotSlider(_gSimSpot);
+  renderGreeksDashboard();
+}
+function onGreeksSimSpotSlider(v){
+  _gSimSpot=v;
+  _syncSimSpotSlider(v);
+  renderGreeksDashboard();
+}
+function _syncSimSpotSlider(v){
+  const sl=document.getElementById('gSimSpotSlider');
+  const lbl=document.getElementById('gSimSpotVal');
+  const ivLbl=document.getElementById('gSimSpotIV');
+  if(!sl) return;
+  // Slider range: 20%–180% of state.spot, snapped to $1 steps
+  const lo=Math.max(1,Math.round(state.spot*0.2));
+  const hi=Math.round(state.spot*1.8);
+  sl.min=lo; sl.max=hi; sl.step=Math.max(1,Math.round(state.spot*0.005));
+  sl.value=Math.min(hi,Math.max(lo,v));
+  if(lbl) lbl.textContent='$'+Number(v).toFixed(0);
+  // Show adjusted IV via rho
+  if(ivLbl&&state.spot>0){
+    const rho=state.spotVolRho||0;
+    const adjIV=state.iv*Math.pow(state.spot/v,rho);
+    const ivPct=(adjIV*100).toFixed(1);
+    const dS=((v-state.spot)/state.spot*100).toFixed(1);
+    const sign=v>=state.spot?'+':'';
+    ivLbl.textContent=`(${sign}${dS}%, IV→${ivPct}%)`;
+    ivLbl.style.color=v>state.spot?'#3fb950':'#f85149';
+  }
+}
 
 function setGreeksView(v){
   _greeksVsExp=v;
@@ -4707,7 +4779,12 @@ function renderGreeksDashboard(){
 
   if(useLive||useSim){
     // ── LIVE or SIM mode: strike on x-axis, one point per option ──
-    if(srcLbl) srcLbl.textContent=useSim?'Simulated · BS model · x = strike':'Per-share · x = strike · computed at current spot';
+    const scenSpot=_gSimSpotActive&&_gSimSpot!==null?_gSimSpot:null;
+    const rho=state.spotVolRho||0;
+    if(srcLbl) srcLbl.textContent=useSim
+      ?'Simulated · BS model · x = strike'
+      :(scenSpot!==null?`Per-share · x = strike · current spot $${spot.toFixed(2)} vs scenario $${scenSpot.toFixed(0)}`
+                       :'Per-share · x = strike · computed at current spot');
 
     const lo=Math.max(1,_gLo||Math.round(spot*0.5));
     const hi=Math.max(lo+1,_gHi||Math.round(spot*1.5));
@@ -4715,15 +4792,31 @@ function renderGreeksDashboard(){
     const T=getT(selExp);
     if(T<=0){ if(srcLbl) srcLbl.textContent='Expired'; return; }
 
+    // Helper: get IV for a given (K, exp, type) at evaluation spot evalS
+    // For live data: use chain IV (real), then adjust for spot move via rho.
+    // For sim data: use model smile at evalS.
+    function getIVat(o, evalS){
+      if(useLive){
+        // Use real chain IV as anchor; scale by spot-vol rho when evalS ≠ spot
+        const chainIV=liveChainIV(o.K,o.exp,o.type)??o.iv;
+        if(!chainIV) return state.iv;
+        if(evalS===spot) return chainIV;
+        return chainIV*Math.pow(spot/evalS,rho);
+      }
+      // Sim mode: smile evaluated at evalS
+      return state.ivSurface==='smile'?smileIV(o.K,evalS,atmIV(T)):atmIV(T);
+    }
+
     // Build option list — live market data OR synthetic BS grid in sim mode
     let optSource=state.liveOptions;
     if(useSim){
+      const evalS=scenSpot??spot;
       const strikes=simStrikeGrid(spot).filter(K=>K>=lo&&K<=hi);
       optSource=[];
       for(const K of strikes){
-        const iv=state.ivSurface==='smile'?smileIV(K,spot,atmIV(T)):atmIV(T);
+        const iv=getIVat({K,exp:selExp,type:'call'},evalS);
         optSource.push({K,iv,type:'call',exp:selExp});
-        optSource.push({K,iv,type:'put', exp:selExp});
+        optSource.push({K,iv:getIVat({K,exp:selExp,type:'put'},evalS),type:'put',exp:selExp});
       }
     }
 
@@ -4734,21 +4827,67 @@ function renderGreeksDashboard(){
       .filter(o=>o.exp===selExp&&o.type==='put'&&o.K>=lo&&o.K<=hi&&(_greeksFilter==='all'||_greeksFilter==='put'))
       .sort((a,b)=>a.K-b.K);
 
-    function greekPoints(opts){
+    // Compute Greeks for a given evaluation spot (current or scenario)
+    function greekPoints(opts, evalS){
       return {
         labels: opts.map(o=>'$'+o.K),
-        delta:  opts.map(o=>bsAll(spot,o.K,T,state.rate,o.iv,o.type).delta),
-        gamma:  opts.map(o=>bsAll(spot,o.K,T,state.rate,o.iv,o.type).gamma),
-        theta:  opts.map(o=>bsAll(spot,o.K,T,state.rate,o.iv,o.type).theta),
-        vega:   opts.map(o=>bsAll(spot,o.K,T,state.rate,o.iv,o.type).vega),
+        delta:  opts.map(o=>bsAll(evalS,o.K,T,state.rate,getIVat(o,evalS),o.type).delta),
+        gamma:  opts.map(o=>bsAll(evalS,o.K,T,state.rate,getIVat(o,evalS),o.type).gamma),
+        theta:  opts.map(o=>bsAll(evalS,o.K,T,state.rate,getIVat(o,evalS),o.type).theta),
+        vega:   opts.map(o=>bsAll(evalS,o.K,T,state.rate,getIVat(o,evalS),o.type).vega),
       };
     }
-    const callPts=greekPoints(callOpts);
-    const putPts=greekPoints(putOpts);
+    const callPts=greekPoints(callOpts,spot);
+    const putPts=greekPoints(putOpts,spot);
+
+    // Scenario overlay (only when slider active and scenSpot ≠ spot)
+    const showScen=scenSpot!==null&&Math.abs(scenSpot-spot)>0.5;
+    const callPtsScen=showScen?greekPoints(callOpts,scenSpot):null;
+    const putPtsScen =showScen?greekPoints(putOpts, scenSpot):null;
 
     // Spot line index: closest strike to current spot in merged label set
     const allStrikes=[...new Set([...callOpts.map(o=>o.K),...putOpts.map(o=>o.K)])].sort((a,b)=>a-b);
     const spotStrikeIdx=allStrikes.reduce((bi,K,i)=>Math.abs(K-spot)<Math.abs(allStrikes[bi]-spot)?i:bi,0);
+    const scenStrikeIdx=scenSpot!==null?allStrikes.reduce((bi,K,i)=>Math.abs(K-scenSpot)<Math.abs(allStrikes[bi]-scenSpot)?i:bi,0):null;
+
+    // Vertical annotation plugin (draw spot + scenario spot lines)
+    const spotVlinePlugin={
+      id:'gSpotVline',
+      afterDraw(ch){
+        const xScale=ch.scales.x;
+        const yScale=ch.scales.y;
+        if(!xScale||!yScale) return;
+        const ctx2=ch.ctx;
+        // Draw current spot line (blue dashed)
+        if(spotStrikeIdx>=0&&spotStrikeIdx<allStrikes.length){
+          const xPos=xScale.getPixelForValue(spotStrikeIdx);
+          ctx2.save();
+          ctx2.setLineDash([3,3]);
+          ctx2.strokeStyle='rgba(88,166,255,0.5)';
+          ctx2.lineWidth=1;
+          ctx2.beginPath();ctx2.moveTo(xPos,yScale.top);ctx2.lineTo(xPos,yScale.bottom);ctx2.stroke();
+          ctx2.fillStyle='rgba(88,166,255,0.8)';
+          ctx2.font='8px sans-serif';
+          ctx2.textAlign='center';
+          ctx2.fillText('$'+spot.toFixed(0),xPos,yScale.top+8);
+          ctx2.restore();
+        }
+        // Draw scenario spot line (yellow dashed)
+        if(showScen&&scenStrikeIdx!==null&&scenStrikeIdx>=0&&scenStrikeIdx<allStrikes.length){
+          const xPos=xScale.getPixelForValue(scenStrikeIdx);
+          ctx2.save();
+          ctx2.setLineDash([4,2]);
+          ctx2.strokeStyle='rgba(255,193,7,0.7)';
+          ctx2.lineWidth=1.5;
+          ctx2.beginPath();ctx2.moveTo(xPos,yScale.top);ctx2.lineTo(xPos,yScale.bottom);ctx2.stroke();
+          ctx2.fillStyle='rgba(255,193,7,0.9)';
+          ctx2.font='8px sans-serif';
+          ctx2.textAlign='center';
+          ctx2.fillText('$'+scenSpot.toFixed(0),xPos,yScale.top+18);
+          ctx2.restore();
+        }
+      }
+    };
 
     const cfgs=[
       {id:'gDeltaChart', label:'Delta Δ',  unit:'Δ (per share)',       callKey:'delta', putKey:'delta'},
@@ -4766,6 +4905,7 @@ function renderGreeksDashboard(){
       if(_greeksCharts[cfg.id]){_greeksCharts[cfg.id].destroy();delete _greeksCharts[cfg.id];}
 
       const datasets=[];
+      // Current spot lines
       if(showCall&&callPts.labels.length>0) datasets.push({
         label:'Calls', data:callPts[cfg.callKey], labels:callPts.labels,
         borderColor:'#58a6ff', backgroundColor:'rgba(88,166,255,0.08)',
@@ -4778,10 +4918,28 @@ function renderGreeksDashboard(){
         borderWidth:1.5, pointRadius:2, pointHoverRadius:4,
         pointBackgroundColor:'#f85149', fill:false, tension:0.3,
       });
+      // Scenario overlay lines (dashed, same colors but dimmed with gold tint)
+      if(showScen&&callPtsScen){
+        if(showCall&&callPtsScen.labels.length>0) datasets.push({
+          label:`Calls @ $${scenSpot.toFixed(0)}`, data:callPtsScen[cfg.callKey],
+          borderColor:'#ffc107', backgroundColor:'transparent',
+          borderWidth:1.5, borderDash:[5,3],
+          pointRadius:2, pointHoverRadius:4,
+          pointBackgroundColor:'#ffc107', fill:false, tension:0.3,
+        });
+        if(showPut&&putPtsScen.labels.length>0) datasets.push({
+          label:`Puts @ $${scenSpot.toFixed(0)}`, data:putPtsScen[cfg.putKey],
+          borderColor:'#ff9800', backgroundColor:'transparent',
+          borderWidth:1.5, borderDash:[5,3],
+          pointRadius:2, pointHoverRadius:4,
+          pointBackgroundColor:'#ff9800', fill:false, tension:0.3,
+        });
+      }
       if(!datasets.length){
         _greeksCharts[cfg.id]=null; continue;
       }
 
+      const adjIV=scenSpot?state.iv*Math.pow(spot/scenSpot,rho):state.iv;
       _greeksCharts[cfg.id]=new Chart(canvas,{
         type:'line',
         data:{
@@ -4789,6 +4947,7 @@ function renderGreeksDashboard(){
           labels: showCall&&callPts.labels.length?callPts.labels:putPts.labels,
           datasets,
         },
+        plugins:[spotVlinePlugin],
         options:{
           responsive:true, maintainAspectRatio:false, animation:false,
           plugins:{
@@ -4797,7 +4956,10 @@ function renderGreeksDashboard(){
               backgroundColor:'#161b22',borderColor:'#30363d',borderWidth:1,
               titleColor:'#c9d1d9',bodyColor:'#8b949e',
               callbacks:{
-                title:i=>`Strike: ${i[0].label} · Spot: $${spot.toFixed(2)}`,
+                title:i=>{
+                  const base=`Strike: ${i[0].label} · Spot: $${spot.toFixed(2)}`;
+                  return scenSpot?base+` · Scen: $${scenSpot.toFixed(0)} (IV→${(adjIV*100).toFixed(1)}%)`:base;
+                },
                 label:i=>{const a=Math.abs(i.raw);return`${i.dataset.label} ${cfg.label}: ${i.raw<0?'-':''}${a.toFixed(4)}`;}
               }
             },
