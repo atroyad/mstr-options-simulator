@@ -412,17 +412,16 @@ input[type=range]{width:100%;accent-color:var(--blu);cursor:pointer;
         <label class="lbl" style="margin-top:10px">Spot-Vol Correlation Band</label>
         <div style="font-size:8px;color:var(--mut);margin-bottom:4px;line-height:1.4">
           Grey band on P&L chart shows how IV moving with spot changes outcomes.
-          Down → IV spikes (protects long vega). Up → IV compresses (caps gains).
+          ρ&gt;0: spot up → IV down (leverage effect). ρ&lt;0: spot up → IV up (momentum/FOMO).
         </div>
         <div class="row" style="gap:4px;margin-bottom:3px">
           <span style="color:var(--mut);min-width:12px;font-size:9px">ρ</span>
-          <input type="range" id="spotVolRhoIn" min="0" max="1.5" step="0.05" value="0.75"
+          <input type="range" id="spotVolRhoIn" min="-2" max="2" step="0.05" value="0.75"
             style="flex:1" oninput="state.spotVolRho=+this.value;document.getElementById('spotVolRhoVal').textContent=(+this.value).toFixed(2);renderChart();scheduleHeatmap();if(_gSimSpotActive){if(_gSimSpot)_syncSimSpotSlider(_gSimSpot);renderGreeksDashboard();}">
           <span id="spotVolRhoVal" style="font-family:monospace;color:var(--ylw);min-width:34px;text-align:right">0.75</span>
         </div>
         <div style="font-size:8px;color:var(--mut);line-height:1.4;margin-bottom:5px">
-          0 = no correlation · 0.5 = mild · 0.75 = typical volatile stock · 1.5 = extreme.<br>
-          Band uses IV(S') = ATM-IV × (S/S')^ρ. Set ρ=0 to hide band.
+          IV(S') = IV₀ × (S/S')^ρ &nbsp;·&nbsp; ρ=0: no change &nbsp;·&nbsp; ρ=0.75: typical equity (vol crush on rally) &nbsp;·&nbsp; ρ&lt;0: momentum regime (vol spikes on rally, e.g. MSTR 140→170 move).
         </div>
 
         <!-- Heatmap vol-correlation toggle -->
@@ -4414,7 +4413,8 @@ function _syncSimSpotSlider(v){
     const dS=((v-state.spot)/state.spot*100).toFixed(1);
     const sign=v>=state.spot?'+':'';
     ivLbl.textContent=`(${sign}${dS}%, IV→${ivPct}%)`;
-    ivLbl.style.color=v>state.spot?'#3fb950':'#f85149';
+    // Color: green if IV increased vs current, red if decreased
+    ivLbl.style.color=adjIV>state.iv?'#3fb950':'#f85149';
   }
 }
 
