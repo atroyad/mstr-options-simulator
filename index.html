@@ -1458,7 +1458,8 @@ function portGreeks(){
   let d=0,g=0,th=0,v=0;
   for(const l of state.legs){
     const T=getT(l.exp);if(T<=0)continue;
-    const gr=bsAll(state.spot,l.K,T,state.rate,state.iv,l.type);
+    const legIV=liveChainIV(l.K,l.exp,l.type)??state.iv;
+    const gr=bsAll(state.spot,l.K,T,state.rate,legIV,l.type);
     const s=(l.action==='buy'?1:-1)*l.qty*100;
     d+=gr.delta*s;g+=gr.gamma*s;th+=gr.theta*s;v+=gr.vega*s;
   }
@@ -2874,7 +2875,16 @@ function scenarioIV(l,S){
     }
     return smileIV(l.K,S,baseIV);
   }
-  return baseIV; // flat mode — just the per-expiry ATM IV
+  // Flat mode: use real chain IV as the base when live data is available.
+  // This ensures P&L and Greeks in the strategy builder match real market prices.
+  // The spot-vol adjustment (rho) is still applied when S ≠ state.spot.
+  const chainIV=liveChainIV(l.K,l.exp,l.type);
+  const iv0=chainIV??baseIV;
+  if(S!==state.spot&&state.spot>0&&iv0>0){
+    // sticky-spot-vol: σ_new = σ_0 × (S_0/S_new)^ρ
+    return iv0*Math.pow(state.spot/S,state.spotVolRho??0);
+  }
+  return iv0;
 }
 
 function renderSmileChart(){
@@ -3850,7 +3860,8 @@ function renderLegs(){
     const cp=liveChainMid(l.K,l.exp,l.type)??bsPrice(state.spot,l.K,T,state.rate,state.iv,l.type);
     const sign=l.action==='buy'?1:-1;
     const pnl=sign*(cp-ep)*l.qty*100;
-    const gr=T>0?bsAll(state.spot,l.K,T,state.rate,state.iv,l.type):{theta:0,d2:0};
+    const legIV=liveChainIV(l.K,l.exp,l.type)??state.iv;
+    const gr=T>0?bsAll(state.spot,l.K,T,state.rate,legIV,l.type):{theta:0,d2:0};
     const tht=gr.theta*sign*l.qty*100;
     const cap=capitalRequired(l);
     const po=probOTM(l);
@@ -4002,6 +4013,20 @@ function liveChainMid(K,exp,type){
   if(o.mid!=null&&o.mid>0) return o.mid;
   if(o.bid!=null&&o.ask!=null&&(o.bid+o.ask)>0) return (o.bid+o.ask)/2;
   return null;
+}
+// Back-solve IV from the real chain mid price for a given leg.
+// Returns null if no live data or if back-solve fails.
+function liveChainIV(K,exp,type){
+  const mid=liveChainMid(K,exp,type);
+  if(mid===null) return null;
+  const T=getT(exp);
+  if(T<=0) return null;
+  // Check direct iv field first (already provided by Yahoo/Saxo parsers)
+  const opts=state.liveOptions.filter(o=>o.exp===exp&&o.type===type&&o.K===K);
+  if(opts.length&&opts[0].iv>0) return opts[0].iv;
+  // Fall back to bisection back-solve
+  const iv=bsIV(mid,state.spot,K,T,state.rate,type);
+  return iv>0?iv:null;
 }
 function fAutoPrice(){
   const exp=document.getElementById('fExpiry').value;
